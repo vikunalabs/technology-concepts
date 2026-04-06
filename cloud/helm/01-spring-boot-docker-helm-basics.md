@@ -1,90 +1,45 @@
-## Part 1: Spring Boot + Docker + Helm Basics - Building Your First Cloud-Ready App
+# Part 1: Spring Boot + Docker + Helm Basics
 
-### Prerequisites
-- Java 17 or later installed
-- Docker installed and running
-- Minikube (for local Kubernetes) or cloud account
-- Basic knowledge of Java/Spring Boot
-- Terminal/command line comfort
+## Prerequisites
+- Java 17+, Docker, Minikube, Maven
+- Comfort with terminal commands
 
-### What You'll Learn
-- ✅ Create a production-ready Spring Boot REST API
-- ✅ Containerize your app with Docker best practices
-- ✅ Understand Kubernetes basics (Pods, Deployments, Services)
-- ✅ Package your app with Helm charts
-- ✅ Deploy to any Kubernetes cluster
-- ✅ Connect all pieces together
+## What This Covers
+- Build a Spring Boot REST API
+- Containerize it with Docker (properly)
+- Understand Kubernetes primitives: Pod, Deployment, Service
+- Package with Helm and deploy to Kubernetes
 
 ---
 
-## Chapter 1: The Big Picture - Why This Stack?
+## The Mental Model
 
-### What We're Building
+Before touching any code, understand what each layer does and why it exists:
 
 ```
-┌─────────────────────────────────────────────────────────────┐
-│                    User Request                             │
-│              GET /hello → "Hello, World!"                   │
-└─────────────────────────┬───────────────────────────────────┘
-                          │
-                          ▼
-┌─────────────────────────────────────────────────────────────┐
-│                    Ingress (Part 5)                         │
-│                 api.myapp.com/hello                         │
-└─────────────────────────┬───────────────────────────────────┘
-                          │
-                          ▼
-┌─────────────────────────────────────────────────────────────┐
-│                    Kubernetes Service                       │
-│              Load balances to healthy pods                  │
-└─────────────────────────┬───────────────────────────────────┘
-                          │
-                          ▼
-┌─────────────────────────────────────────────────────────────┐
-│              Spring Boot Pod (Your App)                     │
-│  ┌─────────────────────────────────────────────────────┐    │
-│  │  Docker Container with Java 17 + Your JAR           │    │
-│  │  - Listens on port 8080                             │    │
-│  │  - Returns "Hello, World!"                          │    │
-│  │  - Health checks at /actuator/health                │    │
-│  └─────────────────────────────────────────────────────┘    │
-└─────────────────────────────────────────────────────────────┘
+Your JAR file
+    └── runs inside a Docker Container   (consistent environment)
+            └── managed by a Kubernetes Pod   (lifecycle management)
+                    └── scaled by a Deployment   (desired state)
+                            └── exposed by a Service   (stable networking)
+                                    └── packaged by Helm   (templated, repeatable)
 ```
 
-### The Complete Flow
+**Why this stack?**
 
-**Analogy - Restaurant Chain:**
-- **Spring Boot App** = Your secret recipe (the food)
-- **Docker** = Kitchen + equipment (standardized environment)
-- **Kubernetes** = Restaurant chain manager (scales, manages locations)
-- **Helm** = Standard operating procedures (SOPs for each location)
-- **Cloud** = Physical restaurant buildings (AWS, GCP, Azure)
+| Problem | Solution |
+|---------|----------|
+| "Works on my machine" | Docker — same environment everywhere |
+| Manual restarts when app crashes | Kubernetes — self-healing |
+| Deploying to dev vs prod differently | Helm — one chart, different values |
+| Scaling manually under load | Kubernetes HPA — automatic |
 
 ---
 
-## Chapter 2: Spring Boot Application - The Foundation
+## Chapter 1: Spring Boot Application
 
-### Step 1: Create the Project
+### Create the Project
 
-**Method 1: Using Spring Initializr (Web UI)**
-1. Go to https://start.spring.io
-2. Select:
-   - Project: Maven
-   - Language: Java
-   - Spring Boot: 3.2.x
-   - Group: com.example
-   - Artifact: hello-app
-   - Name: hello-app
-   - Package name: com.example.helloapp
-   - Packaging: Jar
-   - Java: 17
-3. Add dependencies:
-   - Spring Web
-   - Spring Boot Actuator (for health checks)
-4. Click "Generate" → Download ZIP
-5. Extract to `hello-app/`
-
-**Method 2: Using curl (Command Line)**
 ```bash
 curl https://start.spring.io/starter.zip \
   -d dependencies=web,actuator \
@@ -94,54 +49,37 @@ curl https://start.spring.io/starter.zip \
   -d javaVersion=17 \
   -o hello-app.zip
 
-unzip hello-app.zip -d hello-app
-cd hello-app
+unzip hello-app.zip -d hello-app && cd hello-app
 ```
 
-### Step 2: Create REST Controller
+### REST Controller
 
-**Create `src/main/java/com/example/helloapp/HelloController.java`:**
+**`src/main/java/com/example/helloapp/HelloController.java`**
+
 ```java
 package com.example.helloapp;
 
-import org.springframework.web.bind.annotation.GetMapping;
-import org.springframework.web.bind.annotation.RequestMapping;
-import org.springframework.web.bind.annotation.RestController;
+import org.springframework.web.bind.annotation.*;
 import org.springframework.beans.factory.annotation.Value;
 import java.time.LocalDateTime;
 import java.util.Map;
 
-/**
- * Simple REST controller for our hello world application.
- * 
- * WHAT: Handles HTTP requests and returns responses
- * WHY: Spring Boot maps HTTP requests to Java methods
- * HOW: @RestController tells Spring this class handles web requests
- * WHO: Developers write this once, users consume the API
- */
 @RestController
-@RequestMapping("/api")  // Base path for all endpoints
+@RequestMapping("/api")
 public class HelloController {
-    
+
+    // These values come from application.yml (or env vars in Kubernetes)
     @Value("${app.name:Hello App}")
     private String appName;
-    
+
     @Value("${app.version:1.0.0}")
     private String appVersion;
-    
-    /**
-     * Basic hello world endpoint
-     * GET /api/hello → "Hello, World from Spring Boot!"
-     */
+
     @GetMapping("/hello")
     public String sayHello() {
         return "Hello, World from Spring Boot!";
     }
-    
-    /**
-     * JSON response with metadata
-     * GET /api/info → {"appName":"Hello App","version":"1.0.0","timestamp":"2024-01-15T10:30:00"}
-     */
+
     @GetMapping("/info")
     public Map<String, String> getInfo() {
         return Map.of(
@@ -151,341 +89,216 @@ public class HelloController {
             "status", "healthy"
         );
     }
-    
-    /**
-     * Personalized greeting with parameter
-     * GET /api/greet?name=John → "Hello, John!"
-     */
+
     @GetMapping("/greet")
-    public String greet(@org.springframework.web.bind.annotation.RequestParam(defaultValue = "World") String name) {
+    public String greet(
+        @RequestParam(defaultValue = "World") String name
+    ) {
         return String.format("Hello, %s!", name);
     }
 }
 ```
 
-### Step 3: Add Configuration
+### application.yml
 
-**Update `src/main/resources/application.yml`:**
 ```yaml
-# Application configuration
-# WHAT: Central configuration file for Spring Boot
-# WHY: Externalize configuration for different environments
-# HOW: YAML format with hierarchical structure
-
 spring:
   application:
     name: hello-app
-  
+  shutdown: graceful          # Wait for in-flight requests before stopping
+
 server:
   port: 8080
-  # Graceful shutdown for Kubernetes
-  shutdown: graceful
 
-# Application custom properties
 app:
   name: Hello Kubernetes App
   version: 1.0.0
 
-# Actuator configuration (for health checks)
+# Actuator exposes /actuator/health, /actuator/metrics etc.
+# Kubernetes uses /actuator/health/liveness and /actuator/health/readiness
 management:
   endpoints:
     web:
       exposure:
         include: health,info,metrics
-      base-path: /actuator
   endpoint:
     health:
       show-details: always
       probes:
-        enabled: true  # Enable liveness/readiness endpoints
-  info:
-    env:
+        enabled: true         # Enables /actuator/health/liveness and /readiness
+  health:
+    livenessstate:
       enabled: true
-
-# Logging configuration
-logging:
-  level:
-    com.example.helloapp: INFO
-  pattern:
-    console: "%d{yyyy-MM-dd HH:mm:ss} - %msg%n"
+    readinessstate:
+      enabled: true
 ```
 
-### Step 4: Test Locally
+### Test Locally
 
 ```bash
-# Run the application
 ./mvnw spring-boot:run
 
-# In another terminal, test the endpoints
 curl http://localhost:8080/api/hello
-# Output: Hello, World from Spring Boot!
+# Hello, World from Spring Boot!
 
-curl http://localhost:8080/api/info
-# Output: {"appName":"Hello Kubernetes App","version":"1.0.0","timestamp":"2024-01-15T10:30:00","status":"healthy"}
-
-curl http://localhost:8080/api/greet?name=Developer
-# Output: Hello, Developer!
-
-# Health check endpoint (used by Kubernetes)
 curl http://localhost:8080/actuator/health
-# Output: {"status":"UP"}
+# {"status":"UP"}
 
-# Stop the app (Ctrl+C)
+curl http://localhost:8080/actuator/health/readiness
+# {"status":"UP"}
 ```
 
 ---
 
-## Chapter 3: Docker - Containerization
+## Chapter 2: Docker
 
-### Understanding Docker
+### Key Concepts
 
-**Why Docker?** 
-Without Docker: "It works on my machine!" → Deployment nightmare
-With Docker: Same environment everywhere (dev, test, prod)
+| Term | Analogy | What it is |
+|------|---------|------------|
+| Dockerfile | Recipe | Instructions to build an image |
+| Image | Frozen pizza | Built artifact, ready to run |
+| Container | Baked pizza | Running instance of an image |
+| Registry | Grocery store | Stores and distributes images |
 
-**Analogy:**
-- **Docker image** = Frozen pizza (recipe + ingredients)
-- **Docker container** = Baked pizza (running instance)
-- **Docker registry** = Pizza delivery service (stores images)
+**Why multi-stage builds?** The JDK (needed to compile) is ~400MB. The JRE (needed to run) is ~200MB. With multi-stage builds, you compile in a large image and copy only the JAR to a small runtime image. The final image ships without Maven, source code, or build tools.
 
-### Step 1: Create Dockerfile
-
-**Create `Dockerfile` in project root:**
+### Dockerfile
 
 ```dockerfile
-# Multi-stage Dockerfile for optimal production builds
-# WHY: Separate build environment from runtime (smaller image, more secure)
-
-# Stage 1: Build (uses Maven to compile code)
-# WHAT: Temporary container with JDK and Maven to build the JAR
-# WHY: Build tools not needed in final image
+# Stage 1: Build
+# Full JDK + Maven to compile the application
 FROM maven:3.9-eclipse-temurin-17 AS build
-
 WORKDIR /app
-
-# Copy pom.xml first (leverage Docker cache)
 COPY pom.xml .
-RUN mvn dependency:go-offline
-
-# Copy source code and build
+RUN mvn dependency:go-offline          # Cache dependencies separately (Docker layer cache)
 COPY src ./src
 RUN mvn clean package -DskipTests
 
-# Stage 2: Runtime (only JRE, no build tools)
-# WHAT: Final lightweight image with only the JAR
-# WHY: Smaller image = faster pulls, less vulnerability surface
+# Stage 2: Runtime
+# Only the JRE — no build tools, smaller attack surface
 FROM eclipse-temurin:17-jre-alpine
 
-# Create non-root user (security best practice)
-# WHY: Running as root is dangerous - container escape risk
+# Security: never run as root inside a container
 RUN addgroup -S appgroup && adduser -S appuser -G appgroup
-
-# Create app directory
 WORKDIR /app
-
-# Copy JAR from build stage
 COPY --from=build /app/target/*.jar app.jar
-
-# Copy startup script
-COPY docker-entrypoint.sh /docker-entrypoint.sh
-RUN chmod +x /docker-entrypoint.sh
-
-# Change ownership to non-root user
 RUN chown -R appuser:appgroup /app
 USER appuser
 
-# Expose port (documentation, doesn't actually publish)
 EXPOSE 8080
 
-# Health check (Kubernetes will use separate probes)
+# Health check (separate from Kubernetes probes, used by Docker itself)
 HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \
   CMD wget --quiet --tries=1 --spider http://localhost:8080/actuator/health || exit 1
 
-# Entry point with graceful shutdown support
-ENTRYPOINT ["/docker-entrypoint.sh"]
+ENTRYPOINT ["java", \
+  "-XX:+UseContainerSupport", \
+  "-XX:MaxRAMPercentage=75.0", \
+  "-jar", "/app/app.jar"]
 ```
 
-### Step 2: Create Docker Entrypoint Script
+> **JVM note:** `-XX:+UseContainerSupport` tells the JVM to respect cgroup memory limits (the container's memory limit) rather than the host machine's total RAM. Without this, the JVM may try to allocate far more heap than the container allows, causing OOMKill. This flag is on by default in Java 11+ but explicit is better.
 
-**Create `docker-entrypoint.sh`:**
-```bash
-#!/bin/sh
-# WHAT: Startup script for the container
-# WHY: Allows graceful shutdown and JVM tuning
+### .dockerignore
 
-set -e
-
-# Default JVM options for containers
-# WHY: Container-aware JVM respects cgroup limits
-JAVA_OPTS="${JAVA_OPTS:--XX:+UseContainerSupport -XX:MaxRAMPercentage=75.0}"
-
-# Enable graceful shutdown
-JAVA_OPTS="$JAVA_OPTS -Dspring.lifecycle.timeout-per-shutdown-phase=30s"
-
-echo "Starting Hello App with JVM options: $JAVA_OPTS"
-
-# Execute the JAR
-exec java $JAVA_OPTS -jar /app/app.jar
 ```
-
-### Step 3: Create .dockerignore
-
-**Create `.dockerignore`:**
-```
-# WHAT: Files to exclude from Docker build context
-# WHY: Smaller build context, faster builds, no secrets in image
-
 .git/
-.gitignore
-.mvn/
-mvnw
-mvnw.cmd
-*.md
-*.log
 target/
-.dockerignore
-Dockerfile
-docker-compose.yml
+*.md
 .idea/
 *.iml
 .env
 ```
 
-### Step 4: Build and Test Docker Image
+### Build and Test
 
 ```bash
-# Build the JAR first
 ./mvnw clean package
 
-# Build Docker image
 docker build -t hello-app:1.0.0 .
 
-# List images to verify
-docker images | grep hello-app
-# Output: hello-app   1.0.0    abc123def456   2 minutes ago   250MB
+docker run -d --name hello-test -p 8080:8080 hello-app:1.0.0
 
-# Test running locally
-docker run -d --name hello-app-test -p 8080:8080 hello-app:1.0.0
-
-# Test endpoints
 curl http://localhost:8080/api/hello
-# Output: Hello, World from Spring Boot!
+docker logs hello-test
+docker ps                              # Check health status
 
-# Check container logs
-docker logs hello-app-test
-
-# Check container health
-docker ps
-# Output: CONTAINER ID   STATUS                    PORTS
-# abc123def456         Up 2 minutes (healthy)     0.0.0.0:8080->8080/tcp
-
-# Stop and remove test container
-docker stop hello-app-test
-docker rm hello-app-test
-
-# Check image size (important for production!)
-docker images hello-app:1.0.0
-# Size: ~250MB (much smaller than 1GB+ typical images)
+docker stop hello-test && docker rm hello-test
 ```
 
 ---
 
-## Chapter 4: Kubernetes Basics - Where Apps Live
+## Chapter 3: Kubernetes Basics
 
-### Core Kubernetes Concepts
+### Core Concepts
 
-**Analogy - Apartment Building:**
-- **Pod** = An apartment (one or more rooms/containers)
-- **Deployment** = Building manager (ensures correct number of apartments)
-- **Service** = Building address (stable way to find apartments)
-- **Namespace** = Floor number (organization)
-- **Node** = The building itself (physical/virtual machine)
-- **Cluster** = Apartment complex (multiple buildings)
+| Resource | Analogy | Purpose |
+|----------|---------|---------|
+| **Pod** | One apartment | Runs one or more containers |
+| **Deployment** | Building manager | Ensures N pods are always running |
+| **Service** | Building address | Stable way to reach pods (their IPs change) |
+| **Namespace** | Floor of the building | Logical grouping and isolation |
+| **Node** | The building | Physical/virtual machine |
+| **Cluster** | Apartment complex | Collection of nodes |
 
-### Step 1: Start Kubernetes Locally
+**Why Services exist:** Pods are ephemeral. When a pod restarts, it gets a new IP address. A Service provides a stable IP and DNS name that always points to healthy pods, regardless of restarts or scaling.
+
+### Start Kubernetes Locally
 
 ```bash
-# Start Minikube (local Kubernetes)
 minikube start --cpus=4 --memory=8192 --driver=docker
-
-# Verify cluster is running
-kubectl cluster-info
-# Output: Kubernetes control plane is running at https://127.0.0.1:8443
-
-# Check nodes
-kubectl get nodes
-# Output: NAME       STATUS   ROLES           AGE   VERSION
-# minikube   Ready    control-plane   1m    v1.28.0
-
-# Enable addons
 minikube addons enable ingress
 minikube addons enable metrics-server
-minikube addons enable dashboard
 
-# Get Minikube IP (for accessing services)
-minikube ip
-# Output: 192.168.49.2
+kubectl cluster-info
+kubectl get nodes
 ```
 
-### Step 2: Manual Kubernetes Manifests (Before Helm)
+### Deployment Manifest
 
-**Create `k8s/deployment.yaml`:**
+**`k8s/deployment.yaml`**
+
 ```yaml
-# WHAT: Deployment defines desired state for our pods
-# WHY: Kubernetes maintains this state automatically
-# HOW: Declarative YAML - say WHAT you want, not HOW
-
 apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: hello-app-deployment
   labels:
     app: hello-app
-    version: v1
 spec:
-  # HOW MANY: Number of pod replicas to run
   replicas: 3
-  
-  # SELECTOR: How to find pods managed by this deployment
+
+  # selector tells the Deployment which pods it owns
   selector:
     matchLabels:
       app: hello-app
-  
-  # TEMPLATE: Definition of each pod
+
   template:
     metadata:
       labels:
-        app: hello-app
-        version: v1
+        app: hello-app          # Must match selector above
     spec:
-      # CONTAINERS: What runs in the pod
       containers:
       - name: hello-app
-        image: hello-app:1.0.0  # Must be in registry for cloud
+        image: hello-app:1.0.0
         imagePullPolicy: IfNotPresent
-        
-        # PORTS: Container listens on port 8080
         ports:
         - containerPort: 8080
-          name: http
-        
-        # ENVIRONMENT: Configuration variables
-        env:
-        - name: SPRING_PROFILES_ACTIVE
-          value: "kubernetes"
-        - name: APP_NAME
-          value: "Hello Kubernetes"
-        
-        # RESOURCES: CPU/Memory limits (critical!)
+
+        # Resource requests: what the pod is guaranteed
+        # Resource limits: the maximum it can use
+        # Without these, pods compete unpredictably (noisy neighbor problem)
         resources:
           requests:
             memory: "256Mi"
-            cpu: "250m"
+            cpu: "250m"         # 250m = 0.25 of one CPU core
           limits:
             memory: "512Mi"
             cpu: "500m"
-        
-        # READINESS PROBE: When can pod receive traffic?
+
+        # readinessProbe: "Is the app ready to receive traffic?"
+        # Kubernetes stops sending traffic if this fails — no 503s
         readinessProbe:
           httpGet:
             path: /actuator/health/readiness
@@ -493,8 +306,9 @@ spec:
           initialDelaySeconds: 10
           periodSeconds: 5
           failureThreshold: 3
-        
-        # LIVENESS PROBE: Is pod still healthy?
+
+        # livenessProbe: "Is the app still alive?"
+        # Kubernetes restarts the container if this fails
         livenessProbe:
           httpGet:
             path: /actuator/health/liveness
@@ -502,423 +316,126 @@ spec:
           initialDelaySeconds: 30
           periodSeconds: 10
           failureThreshold: 3
+
+        # preStop: Give in-flight requests time to finish before the pod dies
+        # Works together with spring.shutdown: graceful
+        lifecycle:
+          preStop:
+            exec:
+              command: ["/bin/sh", "-c", "sleep 15"]
 ```
 
-**Create `k8s/service.yaml`:**
-```yaml
-# WHAT: Service provides stable network endpoint
-# WHY: Pods come and go (IPs change), Service gives fixed IP/DNS
+### Service Manifest
 
+**`k8s/service.yaml`**
+
+```yaml
 apiVersion: v1
 kind: Service
 metadata:
   name: hello-app-service
-  labels:
-    app: hello-app
 spec:
-  # SERVICE TYPE: How to expose
-  # ClusterIP: Internal only (default)
-  # NodePort: Access via node IP:port
-  # LoadBalancer: Cloud load balancer (production)
+  # ClusterIP: reachable only inside the cluster (default, cheapest)
+  # NodePort: reachable via <node-ip>:<port> (for local testing)
+  # LoadBalancer: cloud load balancer (production, costs money per service)
   type: ClusterIP
-  
-  # SELECTOR: Which pods to route traffic to
+
   selector:
-    app: hello-app
-  
-  # PORTS: Map service port to container port
+    app: hello-app              # Routes to pods with this label
+
   ports:
-  - port: 8080
-    targetPort: 8080
+  - port: 8080                  # Port the service listens on
+    targetPort: 8080            # Port on the pod to forward to
     protocol: TCP
-    name: http
 ```
 
-**Create `k8s/ingress.yaml` (optional, for production):**
-```yaml
-# WHAT: Ingress routes external traffic to services
-# WHY: Single entry point for multiple services
-
-apiVersion: networking.k8s.io/v1
-kind: Ingress
-metadata:
-  name: hello-app-ingress
-  annotations:
-    kubernetes.io/ingress.class: nginx
-    nginx.ingress.kubernetes.io/ssl-redirect: "false"
-spec:
-  rules:
-  - host: hello-app.local  # For local testing
-    http:
-      paths:
-      - path: /
-        pathType: Prefix
-        backend:
-          service:
-            name: hello-app-service
-            port:
-              number: 8080
-```
-
-### Step 3: Deploy to Kubernetes
+### Deploy and Test
 
 ```bash
-# 1. Create namespace (organization)
 kubectl create namespace hello-app
 
-# 2. Deploy the application
 kubectl apply -f k8s/deployment.yaml -n hello-app
 kubectl apply -f k8s/service.yaml -n hello-app
-kubectl apply -f k8s/ingress.yaml -n hello-app
 
-# 3. Watch pods come up
+# Watch pods start up
 kubectl get pods -n hello-app -w
-# Output:
-# NAME                                    READY   STATUS    RESTARTS   AGE
-# hello-app-deployment-7d8f9c5b6-abc12   1/1     Running   0          10s
-# hello-app-deployment-7d8f9c5b6-def34   1/1     Running   0          10s
-# hello-app-deployment-7d8f9c5b6-ghi56   1/1     Running   0          10s
 
-# 4. Check deployment status
+# Verify deployment
 kubectl get deployments -n hello-app
-# NAME                    READY   UP-TO-DATE   AVAILABLE   AGE
-# hello-app-deployment    3/3     3            3           30s
 
-# 5. Check service
-kubectl get services -n hello-app
-# NAME                 TYPE        CLUSTER-IP      PORT(S)    AGE
-# hello-app-service    ClusterIP   10.96.123.45    8080/TCP   30s
-
-# 6. Test internal access (from within cluster)
+# Test from inside the cluster
 kubectl run test-pod --image=curlimages/curl -it --rm --restart=Never -n hello-app -- \
   curl http://hello-app-service:8080/api/hello
-# Output: Hello, World from Spring Boot!
 
-# 7. Port forward for local testing
+# Test from your machine via port-forward
 kubectl port-forward service/hello-app-service 8080:8080 -n hello-app
-
-# In another terminal:
 curl http://localhost:8080/api/hello
-# Output: Hello, World from Spring Boot!
 
-# 8. Check pod logs
+# Useful debugging commands
 kubectl logs -f deployment/hello-app-deployment -n hello-app
-
-# 9. See what's running
+kubectl describe pod <pod-name> -n hello-app
 kubectl get all -n hello-app
 ```
 
 ---
 
-## Chapter 5: Helm - The Package Manager
+## Chapter 4: Helm
 
-### Why Helm?
+### Why Helm Exists
 
-**Problem with raw Kubernetes YAML:**
-```bash
-# For 3 environments, you need 3 sets of files:
-k8s/dev/deployment.yaml  (replicas: 1, image: dev)
-k8s/staging/deployment.yaml (replicas: 2, image: staging)
-k8s/prod/deployment.yaml (replicas: 5, image: prod)
+Without Helm you maintain separate YAML files per environment:
 
-# Lots of duplication! 
+```
+k8s/dev/deployment.yaml      replicas: 1, image: dev-latest
+k8s/staging/deployment.yaml  replicas: 2, image: staging-latest
+k8s/prod/deployment.yaml     replicas: 5, image: v1.2.3
 ```
 
-**Helm Solution:** Templates + values = One chart, many environments
+95% of each file is identical. Any shared change (add a label, change a probe) must be applied to all three. Helm solves this with templates + values.
 
-### Step 1: Create Helm Chart
+### Create the Chart
 
 ```bash
-# Create chart structure
 helm create hello-app-chart
-
-# Explore the structure
-tree hello-app-chart/
-# hello-app-chart/
-# ├── Chart.yaml          # Chart metadata
-# ├── values.yaml         # Default configuration values
-# ├── templates/          # Kubernetes YAML templates
-# │   ├── deployment.yaml
-# │   ├── service.yaml
-# │   ├── ingress.yaml
-# │   ├── _helpers.tpl    # Helper functions
-# │   └── tests/
-# │       └── test-connection.yaml
-# └── charts/             # Subchart dependencies
 ```
 
-### Step 2: Customize Chart for Our App
-
-**Update `hello-app-chart/Chart.yaml`:**
-```yaml
-apiVersion: v2
-name: hello-app
-description: A production-ready Hello World Spring Boot application
-type: application
-
-# Chart version (changes when packaging changes)
-version: 1.0.0
-
-# App version (your application version)
-appVersion: "1.0.0"
-
-# Metadata
-home: https://github.com/yourusername/hello-app
-sources:
-  - https://github.com/yourusername/hello-app
-
-maintainers:
-  - name: Platform Team
-    email: platform@example.com
-
-# Keywords for Helm Hub
-keywords:
-  - hello-world
-  - spring-boot
-  - web
-  - rest-api
+This generates:
+```
+hello-app-chart/
+├── Chart.yaml          # Chart metadata (name, version)
+├── values.yaml         # Default values — override per environment
+├── templates/
+│   ├── _helpers.tpl    # Named templates (shared snippets)
+│   ├── deployment.yaml # Template files, not plain YAML
+│   ├── service.yaml
+│   └── ingress.yaml
+└── charts/             # Subchart dependencies
 ```
 
-**Update `hello-app-chart/values.yaml`:**
+### How Templates Work
+
+Helm uses Go templates. The `{{ }}` syntax evaluates expressions at deploy time:
+
 ```yaml
-# Default values for hello-app
-# This is a YAML-formatted file.
-# Declare variables to be passed into your templates.
-
-# Global configuration (applies to all subcharts)
-global:
-  environment: development
-  imageRegistry: docker.io
-
-# Application configuration
-replicaCount: 2
-
-# Image configuration
-image:
-  repository: hello-app
-  tag: latest
-  pullPolicy: IfNotPresent
-  # Overrides the image tag whose default is the chart appVersion.
-  digest: ""
-
-# Image pull secrets for private registries
-imagePullSecrets: []
-
-# Name override
-nameOverride: ""
-fullnameOverride: ""
-
-# Service account
-serviceAccount:
-  create: true
-  annotations: {}
-  name: ""
-
-# Pod security context
-podSecurityContext:
-  fsGroup: 2000
-
-# Container security context
-securityContext:
-  capabilities:
-    drop:
-    - ALL
-  readOnlyRootFilesystem: true
-  runAsNonRoot: true
-  runAsUser: 1000
-
-# Service configuration
-service:
-  type: ClusterIP
-  port: 8080
-  targetPort: 8080
-  annotations: {}
-
-# Ingress configuration
-ingress:
-  enabled: false
-  className: ""
-  annotations: {}
-  hosts:
-    - host: chart-example.local
-      paths:
-        - path: /
-          pathType: ImplementationSpecific
-  tls: []
-
-# Resource limits
-resources:
-  requests:
-    cpu: 250m
-    memory: 256Mi
-  limits:
-    cpu: 500m
-    memory: 512Mi
-
-# Autoscaling (Part 9)
-autoscaling:
-  enabled: false
-  minReplicas: 1
-  maxReplicas: 100
-  targetCPUUtilizationPercentage: 80
-
-# Node selector
-nodeSelector: {}
-
-# Tolerations
-tolerations: []
-
-# Affinity
-affinity: {}
-
-# Probes
-probes:
-  liveness:
-    enabled: true
-    path: /actuator/health/liveness
-    initialDelaySeconds: 30
-    periodSeconds: 10
-  readiness:
-    enabled: true
-    path: /actuator/health/readiness
-    initialDelaySeconds: 10
-    periodSeconds: 5
-  startup:
-    enabled: true
-    failureThreshold: 30
-    periodSeconds: 10
-
-# Environment variables
-env:
-  SPRING_PROFILES_ACTIVE: kubernetes
-  APP_NAME: Hello Helm App
-
-# Environment from config map
-envFrom: []
-
-# Extra volumes
-volumes: []
-volumeMounts: []
-
-# Lifecycle hooks
-lifecycle:
-  preStop:
-    exec:
-      command: ["/bin/sh", "-c", "sleep 15"]
-```
-
-**Update `hello-app-chart/templates/deployment.yaml`:**
-```yaml
-apiVersion: apps/v1
-kind: Deployment
+# templates/deployment.yaml
 metadata:
-  name: {{ include "hello-app.fullname" . }}
+  name: {{ include "hello-app.fullname" . }}   # Calls a named template
   labels:
-    {{- include "hello-app.labels" . | nindent 4 }}
+    {{- include "hello-app.labels" . | nindent 4 }}  # nindent adds 4-space indent to each line
+
 spec:
-  {{- if not .Values.autoscaling.enabled }}
-  replicas: {{ .Values.replicaCount }}
-  {{- end }}
-  selector:
-    matchLabels:
-      {{- include "hello-app.selectorLabels" . | nindent 6 }}
-  template:
-    metadata:
-      {{- with .Values.podAnnotations }}
-      annotations:
-        {{- toYaml . | nindent 8 }}
-      {{- end }}
-      labels:
-        {{- include "hello-app.selectorLabels" . | nindent 8 }}
-    spec:
-      {{- with .Values.imagePullSecrets }}
-      imagePullSecrets:
-        {{- toYaml . | nindent 8 }}
-      {{- end }}
-      serviceAccountName: {{ include "hello-app.serviceAccountName" . }}
-      securityContext:
-        {{- toYaml .Values.podSecurityContext | nindent 8 }}
-      containers:
-        - name: {{ .Chart.Name }}
-          securityContext:
-            {{- toYaml .Values.securityContext | nindent 12 }}
-          image: "{{ .Values.image.repository }}:{{ .Values.image.tag | default .Chart.AppVersion }}"
-          imagePullPolicy: {{ .Values.image.pullPolicy }}
-          ports:
-            - name: http
-              containerPort: {{ .Values.service.targetPort }}
-              protocol: TCP
-          {{- if .Values.probes.liveness.enabled }}
-          livenessProbe:
-            httpGet:
-              path: {{ .Values.probes.liveness.path }}
-              port: http
-            initialDelaySeconds: {{ .Values.probes.liveness.initialDelaySeconds }}
-            periodSeconds: {{ .Values.probes.liveness.periodSeconds }}
-          {{- end }}
-          {{- if .Values.probes.readiness.enabled }}
-          readinessProbe:
-            httpGet:
-              path: {{ .Values.probes.readiness.path }}
-              port: http
-            initialDelaySeconds: {{ .Values.probes.readiness.initialDelaySeconds }}
-            periodSeconds: {{ .Values.probes.readiness.periodSeconds }}
-          {{- end }}
-          {{- if .Values.probes.startup.enabled }}
-          startupProbe:
-            httpGet:
-              path: {{ .Values.probes.readiness.path }}
-              port: http
-            failureThreshold: {{ .Values.probes.startup.failureThreshold }}
-            periodSeconds: {{ .Values.probes.startup.periodSeconds }}
-          {{- end }}
-          resources:
-            {{- toYaml .Values.resources | nindent 12 }}
-          {{- with .Values.env }}
-          env:
-            {{- toYaml . | nindent 12 }}
-          {{- end }}
-          {{- with .Values.envFrom }}
-          envFrom:
-            {{- toYaml . | nindent 12 }}
-          {{- end }}
-          {{- with .Values.volumeMounts }}
-          volumeMounts:
-            {{- toYaml . | nindent 12 }}
-          {{- end }}
-          {{- with .Values.lifecycle }}
-          lifecycle:
-            {{- toYaml . | nindent 12 }}
-          {{- end }}
-      {{- with .Values.volumes }}
-      volumes:
-        {{- toYaml . | nindent 8 }}
-      {{- end }}
-      {{- with .Values.nodeSelector }}
-      nodeSelector:
-        {{- toYaml . | nindent 8 }}
-      {{- end }}
-      {{- with .Values.affinity }}
-      affinity:
-        {{- toYaml . | nindent 8 }}
-      {{- end }}
-      {{- with .Values.tolerations }}
-      tolerations:
-        {{- toYaml . | nindent 8 }}
-      {{- end }}
+  replicas: {{ .Values.replicaCount }}         # .Values = your values.yaml
+  # .Release.Name = the name you give at helm install
+  # .Chart.Name   = name from Chart.yaml
 ```
 
-**Update `hello-app-chart/templates/_helpers.tpl`:**
+**The `include` vs inline choice:** Put anything used in more than one template into `_helpers.tpl` as a named template. This is the Helm equivalent of a function.
+
+### `_helpers.tpl` — the important bits
+
 ```go
 {{/*
-Expand the name of the chart.
-*/}}
-{{- define "hello-app.name" -}}
-{{- default .Chart.Name .Values.nameOverride | trunc 63 | trimSuffix "-" }}
-{{- end }}
-
-{{/*
-Create a default fully qualified app name.
+Full name: <release-name>-<chart-name>, truncated to 63 chars (Kubernetes limit)
 */}}
 {{- define "hello-app.fullname" -}}
 {{- if .Values.fullnameOverride }}
@@ -931,89 +448,47 @@ Create a default fully qualified app name.
 {{- printf "%s-%s" .Release.Name $name | trunc 63 | trimSuffix "-" }}
 {{- end }}
 {{- end }}
-{{- end }}
+{{- end -}}
 
 {{/*
-Create chart name and version as used by the chart label.
-*/}}
-{{- define "hello-app.chart" -}}
-{{- printf "%s-%s" .Chart.Name .Chart.Version | replace "+" "_" | trunc 63 | trimSuffix "-" }}
-{{- end }}
-
-{{/*
-Common labels
+Common labels — applied to every resource so they're queryable
 */}}
 {{- define "hello-app.labels" -}}
-helm.sh/chart: {{ include "hello-app.chart" . }}
-{{ include "hello-app.selectorLabels" . }}
-{{- if .Chart.AppVersion }}
+helm.sh/chart: {{ printf "%s-%s" .Chart.Name .Chart.Version }}
+app.kubernetes.io/name: {{ .Chart.Name }}
+app.kubernetes.io/instance: {{ .Release.Name }}
 app.kubernetes.io/version: {{ .Chart.AppVersion | quote }}
-{{- end }}
 app.kubernetes.io/managed-by: {{ .Release.Service }}
-{{- end }}
+{{- end -}}
 
 {{/*
-Selector labels
+Selector labels — used in Deployment.selector and Service.selector
+Must be stable (don't change after creation) — different from common labels
 */}}
 {{- define "hello-app.selectorLabels" -}}
-app.kubernetes.io/name: {{ include "hello-app.name" . }}
+app.kubernetes.io/name: {{ .Chart.Name }}
 app.kubernetes.io/instance: {{ .Release.Name }}
-{{- end }}
-
-{{/*
-Create the name of the service account to use
-*/}}
-{{- define "hello-app.serviceAccountName" -}}
-{{- if .Values.serviceAccount.create }}
-{{- default (include "hello-app.fullname" .) .Values.serviceAccount.name }}
-{{- else }}
-{{- default "default" .Values.serviceAccount.name }}
-{{- end }}
-{{- end }}
+{{- end -}}
 ```
 
-### Step 3: Create Environment-Specific Values
+> **Why two label templates?** `selectorLabels` are used in `matchLabels` and `selector` fields. Kubernetes requires these to never change after a resource is created. `labels` (common labels) include version info that changes on every release — fine on metadata, not fine on selectors.
 
-**Create `values-dev.yaml`:**
+### values.yaml
+
 ```yaml
-# Development environment values
-replicaCount: 1
-
-image:
-  tag: dev-latest
-
-ingress:
-  enabled: false
-
-resources:
-  requests:
-    cpu: 100m
-    memory: 128Mi
-  limits:
-    cpu: 200m
-    memory: 256Mi
-
-env:
-  SPRING_PROFILES_ACTIVE: dev
-  APP_NAME: Hello App - Development
-```
-
-**Create `values-staging.yaml`:**
-```yaml
-# Staging environment values
 replicaCount: 2
 
 image:
-  tag: staging-latest
+  repository: hello-app
+  tag: latest
+  pullPolicy: IfNotPresent
+
+service:
+  type: ClusterIP
+  port: 8080
 
 ingress:
-  enabled: true
-  className: nginx
-  hosts:
-    - host: staging.hello-app.example.com
-      paths:
-        - path: /
-          pathType: Prefix
+  enabled: false
 
 resources:
   requests:
@@ -1023,42 +498,53 @@ resources:
     cpu: 500m
     memory: 512Mi
 
-autoscaling:
-  enabled: true
-  minReplicas: 2
-  maxReplicas: 10
-  targetCPUUtilizationPercentage: 70
+probes:
+  liveness:
+    path: /actuator/health/liveness
+    initialDelaySeconds: 30
+    periodSeconds: 10
+  readiness:
+    path: /actuator/health/readiness
+    initialDelaySeconds: 10
+    periodSeconds: 5
 
 env:
-  SPRING_PROFILES_ACTIVE: staging
-  APP_NAME: Hello App - Staging
+  SPRING_PROFILES_ACTIVE: kubernetes
+  APP_NAME: Hello Helm App
 ```
 
-**Create `values-prod.yaml`:**
+### Environment-Specific Values
+
 ```yaml
-# Production environment values
-replicaCount: 3
-
+# values-dev.yaml — override only what differs
+replicaCount: 1
 image:
-  tag: latest
+  tag: dev-latest
+resources:
+  requests:
+    cpu: 100m
+    memory: 128Mi
+  limits:
+    cpu: 200m
+    memory: 256Mi
+env:
+  SPRING_PROFILES_ACTIVE: dev
+  APP_NAME: Hello App - Dev
+```
 
+```yaml
+# values-prod.yaml
+replicaCount: 5
+image:
+  tag: v1.2.3             # Always pin to a specific version in prod
 ingress:
   enabled: true
   className: nginx
-  annotations:
-    cert-manager.io/cluster-issuer: letsencrypt-prod
-    nginx.ingress.kubernetes.io/ssl-redirect: "true"
-    nginx.ingress.kubernetes.io/rate-limit: "100r/s"
   hosts:
     - host: api.hello-app.example.com
       paths:
         - path: /
           pathType: Prefix
-  tls:
-    - secretName: hello-app-tls
-      hosts:
-        - api.hello-app.example.com
-
 resources:
   requests:
     cpu: 500m
@@ -1066,140 +552,91 @@ resources:
   limits:
     cpu: 2000m
     memory: 1Gi
-
-autoscaling:
-  enabled: true
-  minReplicas: 3
-  maxReplicas: 20
-  targetCPUUtilizationPercentage: 60
-  targetMemoryUtilizationPercentage: 70
-
-podDisruptionBudget:
-  enabled: true
-  minAvailable: 2
-
 env:
   SPRING_PROFILES_ACTIVE: prod
   APP_NAME: Hello App - Production
-  LOG_LEVEL: WARN
-
-nodeSelector:
-  node-type: production
-
-tolerations:
-  - key: "production"
-    operator: "Equal"
-    value: "true"
-    effect: "NoSchedule"
 ```
 
-### Step 4: Test and Deploy with Helm
+### Helm Commands You'll Use Constantly
 
 ```bash
-# 1. Lint the chart (syntax checking)
+# Validate syntax
 helm lint hello-app-chart/
 
-# 2. Template rendering test (see what will be deployed)
-helm template test-release ./hello-app-chart --debug
+# Preview what will be deployed (doesn't actually deploy)
+helm template my-release ./hello-app-chart -f values-dev.yaml
 
-# 3. Dry run (simulate installation)
-helm install test-release ./hello-app-chart --dry-run --debug
+# Dry run (connects to cluster, validates against API, doesn't deploy)
+helm install my-release ./hello-app-chart --dry-run --debug
 
-# 4. Install to development
+# Deploy to dev
 helm install hello-app-dev ./hello-app-chart \
   -f values-dev.yaml \
   --namespace dev \
   --create-namespace
 
-# 5. Check release status
+# See what's deployed
 helm list -n dev
-# NAME            NAMESPACE       REVISION        STATUS          CHART
-# hello-app-dev   dev             1               deployed        hello-app-1.0.0
-
-# 6. Get deployed values
 helm get values hello-app-dev -n dev
-
-# 7. Get all manifests
 helm get manifest hello-app-dev -n dev
 
-# 8. Upgrade to staging
+# Update (deploy new version or changed values)
 helm upgrade hello-app-dev ./hello-app-chart \
-  -f values-staging.yaml \
-  --namespace staging \
-  --create-namespace
+  -f values-dev.yaml \
+  --namespace dev
 
-# 9. Check rollout status
-kubectl rollout status deployment/hello-app-dev -n staging
+# Roll back to previous release
+helm rollback hello-app-dev 1 -n dev
 
-# 10. Test the deployment
-kubectl port-forward service/hello-app-dev 8080:8080 -n staging
-curl http://localhost:8080/api/hello
+# Deploy to prod
+helm upgrade --install hello-app-prod ./hello-app-chart \
+  -f values-prod.yaml \
+  --namespace prod \
+  --create-namespace \
+  --wait \
+  --timeout 5m
 
-# 11. Uninstall
+# Clean up
 helm uninstall hello-app-dev -n dev
 
-# 12. Package chart for distribution
+# Package chart for distribution
 helm package hello-app-chart/
-# Creates: hello-app-1.0.0.tgz
+# Produces: hello-app-1.0.0.tgz
 ```
+
+> **`--wait` flag:** Helm blocks until all pods are ready, or times out. Use in CI/CD so your pipeline fails fast if deployment doesn't succeed.
 
 ---
 
-## Chapter 6: Container Registry Integration
+## Chapter 5: Container Registry
 
-### Why Registry is Critical
+Your Kubernetes cluster cannot pull images from your laptop. Images must live in a registry.
 
-**Problem:** Your Kubernetes cluster can't see images on your laptop!
-
-**Solution:** Push to container registry (Docker Hub, AWS ECR, GCR, ACR)
-
-### Step 1: Push to Docker Hub (Free)
+### Push to Docker Hub
 
 ```bash
-# 1. Create account at hub.docker.com
-
-# 2. Login
 docker login
-# Enter username and password
 
-# 3. Tag your image with your Docker Hub username
 docker tag hello-app:1.0.0 yourusername/hello-app:1.0.0
 docker tag hello-app:1.0.0 yourusername/hello-app:latest
 
-# 4. Push to Docker Hub
 docker push yourusername/hello-app:1.0.0
 docker push yourusername/hello-app:latest
+```
 
-# 5. Update Helm values to use your registry
-cat > values-registry.yaml << EOF
+Update your values file to use the registry image:
+
+```yaml
+# values-prod.yaml
 image:
   repository: yourusername/hello-app
   tag: 1.0.0
-  pullPolicy: Always
-EOF
-
-# 6. Deploy using registry image
-helm upgrade --install hello-app ./hello-app-chart \
-  -f values-registry.yaml \
-  --namespace production
-
-# Now your cluster can pull the image!
+  pullPolicy: Always              # Always re-pull on pod restart
 ```
 
-### Step 2: Create Image Pull Secret (For Private Registry)
+### Image Pull Secret (private registries)
 
-```yaml
-# image-pull-secret.yaml
-apiVersion: v1
-kind: Secret
-metadata:
-  name: regcred
-  namespace: production
-type: kubernetes.io/dockerconfigjson
-data:
-  .dockerconfigjson: <base64-encoded-docker-config>
----
-# Or create via command line
+```bash
 kubectl create secret docker-registry regcred \
   --docker-server=https://index.docker.io/v1/ \
   --docker-username=yourusername \
@@ -1208,140 +645,53 @@ kubectl create secret docker-registry regcred \
   -n production
 ```
 
----
+Reference in values:
 
-## Chapter 7: Complete Working Example
-
-### Putting It All Together
-
-```bash
-#!/bin/bash
-# complete-deployment.sh
-# One script to build, package, and deploy everything
-
-set -e
-
-echo "🚀 Starting complete deployment pipeline"
-
-# 1. Build Spring Boot app
-echo "📦 Building Spring Boot application..."
-./mvnw clean package
-
-# 2. Build Docker image
-echo "🐳 Building Docker image..."
-docker build -t hello-app:1.0.0 .
-
-# 3. Tag for registry
-echo "🏷️  Tagging image for registry..."
-docker tag hello-app:1.0.0 yourusername/hello-app:1.0.0
-
-# 4. Push to registry
-echo "📤 Pushing to container registry..."
-docker push yourusername/hello-app:1.0.0
-
-# 5. Create namespace
-echo "🏗️  Creating namespace..."
-kubectl create namespace hello-app-prod --dry-run=client -o yaml | kubectl apply -f -
-
-# 6. Deploy with Helm
-echo "🎯 Deploying to Kubernetes with Helm..."
-helm upgrade --install hello-app ./hello-app-chart \
-  -f values-prod.yaml \
-  --set image.repository=yourusername/hello-app \
-  --set image.tag=1.0.0 \
-  --namespace hello-app-prod \
-  --wait \
-  --timeout 5m
-
-# 7. Get deployment status
-echo "📊 Deployment status:"
-kubectl get pods,svc,ingress -n hello-app-prod
-
-# 8. Get service URL
-if command -v minikube &> /dev/null; then
-  echo "🌐 Access the app at:"
-  minikube service list | grep hello-app
-else
-  echo "🌐 Get external IP with: kubectl get svc -n hello-app-prod"
-fi
-
-echo "✅ Deployment complete!"
-```
-
-### Verify Everything Works
-
-```bash
-# Check all resources
-kubectl get all -n hello-app-prod
-
-# Check Helm releases
-helm list -n hello-app-prod
-
-# Test the API
-kubectl run test --image=curlimages/curl -it --rm --restart=Never -n hello-app-prod -- \
-  curl http://hello-app:8080/api/hello
-
-# Check logs
-kubectl logs -f deployment/hello-app -n hello-app-prod
-
-# Scale manually (if HPA not enabled)
-kubectl scale deployment hello-app --replicas=5 -n hello-app-prod
-
-# Check resource usage
-kubectl top pods -n hello-app-prod
+```yaml
+imagePullSecrets:
+  - name: regcred
 ```
 
 ---
 
-## Summary: Part 1 Checklist
+## Quick Reference
 
-| Component | Status | Verification |
-|-----------|--------|--------------|
-| Spring Boot App | ✅ | `curl localhost:8080/api/hello` works |
-| Docker Image | ✅ | `docker run hello-app:1.0.0` works |
-| Container Registry | ✅ | Image pushed to Docker Hub/ECR |
-| Kubernetes Manifests | ✅ | `kubectl apply -f k8s/` works |
-| Helm Chart | ✅ | `helm install` works |
-| Multi-environment | ✅ | Different values for dev/staging/prod |
-| Health Checks | ✅ | `/actuator/health` returns UP |
-| Resource Limits | ✅ | Pods have CPU/memory limits |
-| Graceful Shutdown | ✅ | Pods wait 15s before termination |
+### Probe Decision Guide
 
-## Common Issues and Solutions
+| Probe | Question | Failure action |
+|-------|----------|---------------|
+| `startupProbe` | Still initializing? | Disables liveness until passes |
+| `readinessProbe` | Ready for traffic? | Removed from Service (no traffic) |
+| `livenessProbe` | Still alive? | Container restarted |
 
-| Issue | Symptom | Solution |
-|-------|---------|----------|
-| **ImagePullBackOff** | Pod stuck in ImagePullBackOff | Push image to registry, check image name |
-| **CrashLoopBackOff** | Pod keeps restarting | Check logs: `kubectl logs pod-name` |
-| **Pending** | Pod not scheduling | Check resources: `kubectl describe pod` |
-| **Connection refused** | Can't reach service | Check service selector, port numbers |
-| **Helm template errors** | Failed to render | Run `helm template --debug` |
-| **Registry auth failed** | Can't pull image | Create image pull secret |
+Use `startupProbe` for Spring Boot — it takes 20-60s to start, and without a startup probe, the liveness probe may kill it before it finishes booting.
 
-## Next Steps
+```yaml
+startupProbe:
+  httpGet:
+    path: /actuator/health/readiness
+    port: 8080
+  failureThreshold: 30    # 30 * 5s = 150 seconds max startup time
+  periodSeconds: 5
+```
 
-After mastering Part 1, you're ready for:
-- **Part 2: Kubernetes Core Concepts** - Namespaces, ConfigMaps, Secrets
-- **Part 3: Helm Deep Dive** - Custom templates, hooks, dependencies
-- **Part 4: CI/CD Pipeline** - Automate everything
+### Resource Sizing Guide (Spring Boot)
 
----
+| Environment | CPU Request | CPU Limit | Memory Request | Memory Limit |
+|-------------|-------------|-----------|----------------|--------------|
+| Dev | 100m | 200m | 128Mi | 256Mi |
+| Staging | 250m | 500m | 256Mi | 512Mi |
+| Prod | 500m | 2000m | 512Mi | 1Gi |
 
-## Practice Exercises
+Memory limit should be at least 2x request to give the JVM room to breathe. The JVM with `-XX:MaxRAMPercentage=75.0` will use 75% of the limit as max heap.
 
-### Exercise 1: Modify the App
-Add a new endpoint `/api/version` that returns the app version. Build and redeploy.
+### Common Errors
 
-### Exercise 2: Scale Testing
-Deploy with 5 replicas and watch how Kubernetes distributes them.
-
-### Exercise 3: Failure Testing
-Delete a pod manually and watch Kubernetes recreate it automatically.
-
-### Exercise 4: Configuration
-Use Helm to deploy the same chart to dev and prod with different replica counts.
-
-### Exercise 5: Registry
-Push your image to Docker Hub and deploy to Minikube pulling from registry.
-
----
+| Error | Cause | Fix |
+|-------|-------|-----|
+| `ImagePullBackOff` | Cluster can't pull image | Push to registry, check image name/tag |
+| `CrashLoopBackOff` | App crashes on start | `kubectl logs <pod>` to see why |
+| `Pending` | No node has room | Check resource requests, `kubectl describe pod` |
+| `OOMKilled` | Exceeded memory limit | Increase limit or fix memory leak |
+| `Connection refused` | Service selector mismatch | Check labels match between Service and pods |
+| Helm template error | Go template syntax | Run `helm template --debug` to see rendered output |
