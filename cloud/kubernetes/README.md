@@ -16,51 +16,11 @@
 
 ---
 
-## What Changed From the Originals
-
-### Kept (everything valuable)
-- All code examples, YAML manifests, and commands
-- All analogies (restaurant chain, apartment building, etc.)
-- All three cloud provider examples (AWS, GCP, Azure) — they stay
-- Istio / service mesh section
-- Database operators (CrunchyData, Zalando, Redis Operator)
-- Full chaos engineering section
-- OPA Gatekeeper with all four constraint templates
-- HashiCorp Vault integration
-- Complete GitHub Actions + GitLab CI pipelines
-- All troubleshooting tables
-- All practice exercises
-
-### Improved
-- **WHY/HOW/WHAT framing** added to every major concept, not just some
-- **Concept introduction order** fixed in Part 2 (too many new things at once in the original)
-- **Probe explanation** deepened — the original didn't explain *what happens* if you skip startupProbe
-- **`include` vs `template`** in Helm — the original mentioned it briefly; now properly explained
-- **Secrets misconception** fixed — original said "encrypted", which is wrong; Secrets are base64-encoded by default
-- **JVM memory flag** explanation deepened — original had the flag but not *why* it matters in containers
-- **Registry section** was duplicated across Part 1 and Part 2 — consolidated into Part 2, Part 1 just pushes to Docker Hub
-- **Network policy "allow DNS"** rule added as mandatory companion to every deny-all policy
-- **Missing concepts added** (see below)
-
-### Missing concepts added
-- **Part 1:** `--wait` and `--atomic` Helm flags explained; image layer caching explained
-- **Part 2:** `kubectl rollout restart` explained; ConfigMap hot-reload vs restart distinction
-- **Part 3:** `include` vs `template` properly explained; `lookup` function risk noted
-- **Part 4:** `base64 -w 0` flag explained (line wrapping issue); OIDC vs static credentials
-- **Part 5:** `pathType` differences (Prefix vs Exact vs ImplementationSpecific) explained; nip.io for local TLS testing
-- **Part 6:** `PGDATA` subdirectory issue with StatefulSets explained; `emptyDir` vs PVC distinction
-- **Part 7:** Why `automountServiceAccountToken: false` matters; what IRSA actually does step by step
-- **Part 8:** Why `rate()` vs `irate()` matters; what high cardinality means and why it crashes Prometheus
-- **Part 9:** Why HPA + VPA conflict on same metric explained clearly; `stabilizationWindowSeconds` purpose
-- **Part 10:** `helm diff` plugin introduced; `kubectl diff` before applying; post-mortem template added
-
----
-
 ## Part-by-Part Plan
 
 ---
 
-### Part 1: Spring Boot + Docker + Helm — Your First Cloud-Ready App
+### [Part 1: Spring Boot + Docker + Helm — Your First Cloud-Ready App](articles/01-spring-boot-docker-helm-basics.md)
 **Level:** Complete beginner  
 **Goal:** Get a working Spring Boot app running in Kubernetes via Helm by the end
 
@@ -82,13 +42,16 @@
 - WHY Docker: the "works on my machine" problem solved
 - WHAT is a multi-stage build and WHY it matters (build image ~1GB vs runtime ~200MB)
 - WHY non-root user: container escape risk
-- WHY copy pom.xml first: Docker layer caching explained
+- Docker layer caching deep dive:
+  - WHY copy `pom.xml` first and run `mvn dependency:go-offline` before `COPY . .`
+  - The invalidation rule: `COPY . .` invalidates every layer below it when *any* file changes — so dependencies get re-downloaded on every build if you don't cache them first
+  - What `.dockerignore` prevents from busting the cache (`target/`, `.git/`, `*.md`)
 - WHY `UseContainerSupport`: JVM doesn't know about container memory limits by default
   - What happens without it: JVM allocates heap based on host RAM → OOMKilled
   - What `MaxRAMPercentage=75.0` means: JVM uses 75% of container limit as max heap
-- .dockerignore: WHY it exists, what happens without it
+- `SPRING_PROFILES_ACTIVE` as env var in ENTRYPOINT, not hardcoded — same image works across all environments; Kubernetes sets the variable via ConfigMap/env
 - Build, run, test, verify health check
-- Image size comparison: multi-stage vs single-stage
+- Image size comparison table: single-stage vs multi-stage
 
 #### Chapter 4: Kubernetes — Where Apps Live
 - WHY Kubernetes: what you'd have to do manually without it
@@ -160,21 +123,27 @@
 - Using ConfigMaps in pods: env vars vs mounted files
   - WHEN to use env vars: simple key-value, app reads from environment
   - WHEN to use mounted files: large configs, properties files, Spring Boot config
-  - IMPORTANT: env vars need pod restart to update; mounted files can hot-reload
+  - IMPORTANT: env vars need pod restart to update; mounted files are updated by kubelet but the app must re-read them
+- ConfigMap hot-reload — three options with tradeoffs:
+  1. Pod restart (`kubectl rollout restart`) — always works, brief disruption
+  2. `spring.cloud.kubernetes.reload.enabled=true` — requires `spring-cloud-kubernetes` dependency, reloads `@ConfigurationProperties` beans without restart
+  3. `@RefreshScope` + `/actuator/refresh` — reloads only annotated beans, manual trigger needed
 - Spring Boot reading from environment variables and mounted files
 - Helm + ConfigMaps: generating config from values.yaml
-- `kubectl rollout restart` — HOW to apply ConfigMap changes to running pods
+- `kubectl rollout restart` — HOW to apply ConfigMap changes and WHEN it's the right choice
 
 #### Chapter 4: Secrets — Handling Sensitive Data
 - WHY Secrets are different from ConfigMaps
 - CRITICAL MISCONCEPTION: Secrets are NOT encrypted by default — they are base64-encoded
-  - What this means: anyone with `kubectl get secret` can read them
-  - How to actually secure secrets: RBAC + encryption at rest in etcd + external secrets
-- Creating secrets: from-literal, from-file, stringData vs data
-- Using secrets: env vars vs mounted files (mounted files are more secure — don't appear in `kubectl describe pod`)
+  - What base64 encoding is: it's encoding for safe transmission, not security
+  - What this means in practice: anyone with `kubectl get secret` access can read them
+  - Inspecting a secret: `kubectl get secret <name> -o yaml` shows base64 values; `echo "dmFsdWU=" | base64 -d` decodes them — readers should know how to do this
+  - How to actually secure secrets: RBAC (restrict who can `get secrets`) + encryption at rest in etcd + external secrets manager
+- Creating secrets: from-literal, from-file, `stringData` vs `data` (use `stringData` — no manual base64)
+- Using secrets: env vars vs mounted files (mounted files are more secure — values don't appear in `kubectl describe pod` output)
 - WARNING: never commit secret YAML to Git
 - Production approach: External Secrets Operator (sync from AWS Secrets Manager / GCP Secret Manager / Vault)
-- Sealed Secrets: encrypt for safe Git storage
+- Sealed Secrets: encrypt for safe Git storage — how to use `kubeseal`
 
 #### Chapter 5: Resource Management — Stop Noisy Neighbors
 - WHY resource limits: one app stealing all CPU/RAM = everyone suffers
@@ -260,10 +229,13 @@
 - WHY hooks: database migrations must run BEFORE new pods start serving traffic
 - WHAT hooks are: Jobs/Pods annotated to run at specific Helm lifecycle points
 - All hook types: pre/post-install, pre/post-upgrade, pre/post-delete, pre/post-rollback, test
-- Hook weights: controlling order when multiple hooks run at same point
+- Hook weights: controlling order when multiple hooks run at the same point
+  - Lower numbers run first (weight "-5" runs before "0" runs before "5")
+  - Default weight is 0 if not specified
+  - Use negative weights for things that must run very early (e.g., environment validation)
 - Hook delete policies: `hook-succeeded`, `before-hook-creation`, `hook-failed`
   - WHY `before-hook-creation`: prevents "job already exists" error on upgrades
-  - WHY keep on `hook-failed`: debugging failed migrations
+  - WHY keep on `hook-failed`: you need the logs to debug a failed migration
 - Database migration hook: complete example with Spring Boot Flyway/Liquibase
 - Pre-install validation hook: check environment before deploying
 - Post-deploy notification hook: Slack alert
@@ -325,9 +297,10 @@
 - `docker/build-push-action`: build with caching, push
 - Trivy vulnerability scanner: fail build on CRITICAL CVEs
 - `--atomic` flag: auto-rollback on failed helm upgrade
-- Kubeconfig encoding: `base64 -w 0` (the `-w 0` prevents line wrapping that breaks decoding)
-- OIDC vs static credentials: WHY OIDC (no long-lived secrets stored in GitHub)
-- Security best practices: environment secrets, OIDC, never print secrets
+- `helm diff` plugin in CI: add a PR step that runs `helm diff upgrade` and posts the diff as a PR comment — reviewers see exactly what will change in the cluster before merging
+- Kubeconfig encoding: `base64 -w 0` — the `-w 0` disables line wrapping; without it, base64 inserts newlines every 76 chars which breaks decoding in CI
+- OIDC vs static credentials: WHY OIDC (no long-lived secrets stored in GitHub, tokens expire)
+- Security best practices: environment secrets, OIDC, never print secrets in logs
 
 #### Chapter 4: Semantic Versioning & Changelog
 - WHAT semver is: `MAJOR.MINOR.PATCH` and when each bumps
@@ -380,18 +353,29 @@
 
 #### Chapter 3: Ingress Controllers
 - WHAT an Ingress controller is: the implementation of the Ingress spec
-- Comparison: nginx-ingress, Traefik, AWS ALB Ingress, GCE Ingress, Contour, Istio Gateway
+- Comparison and recommendation:
+  - nginx-ingress: best default choice — works on every cluster, most features, huge community
+  - AWS ALB Ingress Controller: EKS-only, native AWS integration (cheaper per LB), fewer features
+  - Traefik: good if you want a built-in dashboard and dynamic config
+  - Istio Gateway: only if you're already running Istio — don't install Istio just for ingress
+  - Contour, GCE Ingress: cloud-specific alternatives
 - Installing nginx-ingress with Helm (all cloud providers + Minikube)
 - Installing AWS ALB Ingress Controller
 
 #### Chapter 4: Ingress Rules
 - Basic Ingress: host-based routing
 - Path-based routing: `pathType` — Prefix vs Exact vs ImplementationSpecific
-  - WHY pathType matters: wrong type = routes don't match
-- Path rewriting: `rewrite-target` annotation, regex capture groups
-- Multiple backends: microservices routing
-- Header-based routing: canary deployments with `canary-weight`
-- Sticky sessions: cookie affinity
+  - WHY pathType matters: wrong type = routes silently don't match (common gotcha)
+  - Prefix: `/api` matches `/api`, `/api/users`, `/api/orders`
+  - Exact: `/api` matches ONLY `/api` — not `/api/`
+  - ImplementationSpecific: controller-defined, used for regex (nginx)
+- Path rewriting with `rewrite-target`:
+  - The problem: `/app/users` reaches the backend as `/app/users` but the backend expects `/users`
+  - The solution: regex capture groups — `path: /app(/|$)(.*)` with `rewrite-target: /$2` strips the `/app` prefix
+  - Complete working example with annotation
+- Multiple backends: microservices routing from one Ingress
+- Header-based routing: canary deployments with `canary-weight` annotation
+- Sticky sessions: cookie affinity annotation
 - Useful nginx annotations: rate limiting, CORS, proxy timeouts, request size, security headers, WebSocket
 
 #### Chapter 5: TLS with cert-manager
@@ -492,8 +476,12 @@
 - Headless Service: `clusterIP: None` — WHY StatefulSets need it
 - Complete PostgreSQL StatefulSet example
 - IMPORTANT: `PGDATA` subdirectory — WHY you must set `PGDATA=/var/lib/postgresql/data/pgdata`
-  - PostgreSQL refuses to start if the mount point itself isn't empty
-  - Subdirectory solves this: PVC is mounted at `/data`, PostgreSQL writes to `/data/pgdata`
+  - PostgreSQL refuses to start if the mount point itself isn't empty (PVCs have a `lost+found` directory)
+  - Subdirectory solves this: PVC mounted at `/data`, PostgreSQL writes to `/data/pgdata`
+- IMPORTANT: MySQL equivalent — `--datadir` must point to a subdirectory of the mounted volume, not the mount root, for the same reason
+- `podManagementPolicy: OrderedReady` vs `Parallel`:
+  - `OrderedReady` (default): pods start/stop one at a time in order — required for databases with leader election
+  - `Parallel`: all pods start/stop simultaneously — use for stateless workloads that happen to use StatefulSet for stable identity
 - Scaling StatefulSets: scale-up adds pods, scale-down removes from highest ordinal
 - Rolling updates: reverse order (2→1→0), each waits for previous to be ready
 - `kubectl rollout status statefulset/postgres`
@@ -557,13 +545,16 @@
 #### Chapter 3: Service Accounts — Pod Identity
 - WHAT service accounts are: identity for pods to talk to the Kubernetes API
 - WHY custom service accounts: the `default` SA often has too many permissions
-- `automountServiceAccountToken: false`: WHY — don't mount K8s API token if your app doesn't need it
+- `automountServiceAccountToken: false`: disables the *default* token mounted at `/var/run/secrets/kubernetes.io/serviceaccount/token`
+  - WHY disable it: if your app doesn't call the Kubernetes API, it doesn't need this token — removing it reduces the blast radius if the pod is compromised
+  - IMPORTANT: this does NOT break IRSA — IRSA uses a *projected* service account token mounted at a separate path (`/var/run/secrets/eks.amazonaws.com/serviceaccount/token`) via a separate volume injected by the EKS pod identity webhook — a completely different mechanism from the default token
 - Creating and binding roles to service accounts
 - AWS IRSA (IAM Roles for Service Accounts): pods get AWS credentials without access keys
-  - HOW it works: OIDC trust → AssumeRoleWithWebIdentity → temporary credentials
-  - Step-by-step setup
-- GCP Workload Identity
-- Azure AD Pod Identity
+  - WHY IRSA over access keys: no long-lived credentials, automatic rotation, scoped to a specific SA
+  - HOW it works step by step: OIDC trust policy → pod authenticates with projected token → STS `AssumeRoleWithWebIdentity` → temporary credentials injected as env vars
+  - Full setup: OIDC provider, IAM role trust policy, SA annotation
+- GCP Workload Identity: equivalent for GKE
+- Azure AD Pod Identity (now: Azure Workload Identity)
 
 #### Chapter 4: Pod Security Standards
 - Pod Security Levels: Privileged / Baseline / Restricted
@@ -653,9 +644,16 @@
   - P95/P99 latency: `histogram_quantile()`
   - JVM heap usage
   - Pod CPU/Memory
-- HIGH CARDINALITY WARNING: don't use user IDs or request IDs as labels — Prometheus will OOM
-  - WHY: each unique label combination = a new time series; millions of series = out of memory
-- `rate()` vs `irate()`: rate() for alerting (smoothed), irate() for dashboards (instantaneous)
+- HIGH CARDINALITY WARNING: do not use user IDs, request IDs, or any unbounded values as metric labels
+  - Concrete example: `user_id` label with 10,000 users = 10,000 new time series created per scrape cycle; at 30-second scrape intervals that's millions of series per day → Prometheus runs out of memory and crashes
+  - Rule: labels should have low cardinality — environment, status code, HTTP method, endpoint are fine; user ID, session ID, trace ID are not
+- `rate()` vs `irate()`:
+  - `rate()`: average rate over the window (smoothed) — use for alerting, dashboards showing trends
+  - `irate()`: rate based on last two data points (instantaneous) — use for dashboards showing current spikes
+- Prometheus Adapter for custom HPA metrics:
+  - Installing the adapter
+  - Working `ConfigMap` example mapping `http_server_requests_seconds_count` to `http_requests_per_second` custom metric
+  - Verifying the metric is available: `kubectl get --raw /apis/custom.metrics.k8s.io/v1beta1`
 
 #### Chapter 3: Grafana — Visualization
 - Accessing Grafana, getting admin password
@@ -784,16 +782,20 @@
 - Chaos scheduling: only during business hours, exclude holidays
 
 #### Chapter 7: Advanced Deployment Strategies
-- Rolling update: `maxSurge` + `maxUnavailable` — default Kubernetes strategy
+- Rolling update: `maxSurge` + `maxUnavailable` — default Kubernetes strategy, no extra tooling needed
 - Blue-green deployment with Argo Rollouts:
-  - WHAT: run old (blue) and new (green) versions simultaneously
+  - WHAT: run old (blue) and new (green) versions simultaneously, switch all traffic at once
   - `autoPromotionEnabled: false`: manual gate before switching traffic
-  - Instant rollback: switch back to blue if green fails
+  - Instant rollback: switch back to blue — new pods are still running, no redeploy needed
 - Canary deployment with Argo Rollouts:
   - WHAT: gradually shift traffic from old to new (10% → 25% → 50% → 100%)
+  - Requires two Services: a `stable` Service (selects old pods) and a `canary` Service (selects new pods) — Argo Rollouts controls the selector labels and traffic weight between them; this Service setup is non-obvious and not required for blue-green
   - Automated rollback via Analysis: if error rate > 5%, roll back automatically
-  - AnalysisTemplate: define success criteria as Prometheus query
-- When to use each: rolling (default), blue-green (zero risk cutover), canary (gradual rollout with data)
+  - AnalysisTemplate: define success criteria as Prometheus query — complete example
+- When to use each:
+  - Rolling update: standard day-to-day deployments
+  - Blue-green: zero-risk cutover when you need instant full rollback
+  - Canary: gradual rollout where you want real traffic data before committing
 
 #### Chapter 8: Disaster Recovery
 - RTO vs RPO: what they mean, how to set targets
@@ -812,10 +814,11 @@
 **Goal:** A complete reference for running production Kubernetes workloads
 
 #### Chapter 1: Production Readiness Framework
-- The checklist: application, container, Kubernetes, security, observability, scalability, CI/CD, DR, cost, documentation
+- The minimum viable production checklist (20 items) — the things that *must* be in place before going live
+- The full production checklist organized by category: application, container, Kubernetes, security, observability, scalability, CI/CD, DR, cost, documentation
 - Pre-production validation script
-- `kubectl diff`: compare what's in cluster with what you're about to apply (use before every apply)
-- `helm diff` plugin: same for Helm upgrades
+- `kubectl diff`: compare what's in cluster with what you're about to apply — run before every `kubectl apply`
+- `helm diff` plugin: same for Helm upgrades — shows field-level changes, not just "something changed"
 
 #### Chapter 2: Complete Production Helm Values
 - The definitive values-prod.yaml: every field explained
@@ -914,6 +917,9 @@ kubernetes-mastery-series/
 4. **Code/YAML examples** — with inline comments explaining WHY each line exists
 5. **Verification** — how to confirm it worked
 
+### Misconceptions — handled in-prose, not callout boxes
+Common misconceptions (Secrets are encrypted, `latest` tag is fine in prod, etc.) are corrected *within the relevant section* with context — not isolated into a separate box. A correction is only useful alongside the explanation of why the misconception is wrong and what the right mental model is. Pulling it into a box loses that context.
+
 ### Code comment style
 ```yaml
 # WHY: Without this, Kubernetes sends traffic before the app is ready → 500 errors
@@ -926,6 +932,9 @@ readinessProbe:
   failureThreshold: 3        # Remove from Service after 3 consecutive failures (15s)
 ```
 
+### Long YAML blocks
+Any YAML block over ~30 lines is split into smaller chunks with explanatory prose between sections — not all comments inline. This keeps explanation visible and scannable rather than buried in a wall of commented code.
+
 ### Troubleshooting table format (end of every article)
 | Symptom | Likely Cause | Diagnostic Command | Fix |
 |---------|-------------|-------------------|-----|
@@ -934,19 +943,3 @@ readinessProbe:
 5 exercises progressing from "follow the steps" to "figure it out yourself"
 
 ---
-
-## Estimated Article Lengths
-
-| Part | Chapters | Estimated Length |
-|------|----------|-----------------|
-| 1 | 7 | ~5,000 words |
-| 2 | 7 | ~5,500 words |
-| 3 | 6 | ~5,000 words |
-| 4 | 7 | ~4,500 words |
-| 5 | 9 | ~5,500 words |
-| 6 | 8 | ~5,000 words |
-| 7 | 9 | ~5,500 words |
-| 8 | 8 | ~5,500 words |
-| 9 | 8 | ~5,000 words |
-| 10 | 9 | ~5,000 words |
-| **Total** | **78** | **~52,000 words** |
