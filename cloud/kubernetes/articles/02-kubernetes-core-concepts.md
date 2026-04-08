@@ -2,7 +2,7 @@
 
 > **Series:** Kubernetes Mastery — From Hello World to Production
 > **Level:** Beginner–Intermediate
-> **Prerequisites:** Completed Part 1, or comfortable with Spring Boot + Docker basics
+> **Prerequisites:** Completed Part 1 (Spring Boot app with Actuator endpoints, Docker image built and pushed to a registry, Helm chart available)
 > **Time to complete:** 4–5 hours
 > **What you'll learn:** Container registries, namespaces, ConfigMaps, Secrets, resource management, and health probes — the building blocks every real deployment depends on
 
@@ -392,6 +392,11 @@ Five steps — for changing a URL. And the new image is functionally identical t
 
 **ConfigMaps** exist to break this cycle. A ConfigMap holds configuration data separately from your application image. The image stays the same; you update the ConfigMap and restart the pod. No rebuild, no new image, no push.
 
+**Quick start — apply a ConfigMap:**
+```bash
+kubectl apply -f configmap.yaml -n hello-app
+```
+
 ### The Whiteboard Analogy
 
 Think of a ConfigMap as a whiteboard in a shared office. Your application walks in, reads what's on the whiteboard (the ConfigMap), and uses those values. When you need to change the database URL, you erase the old value and write the new one. The next time the application starts, it reads the new value. The application itself (the Docker image) never changed — only what was written on the whiteboard.
@@ -517,6 +522,18 @@ spring:
 | **Visibility in `kubectl describe pod`** | Values shown in pod description | Only mount path shown, not contents |
 | **App reads values** | On startup, not updated until restart | File is updated by kubelet (eventually consistent) |
 | **Spring Boot hot-reload** | Not possible without restart | Possible with additional setup (see below) |
+
+### ConfigMap vs Secret — When to Use Which
+
+| | ConfigMap | Secret |
+|-|-----------|--------|
+| **Purpose** | Non-sensitive configuration (URLs, feature flags, log levels) | Sensitive data (passwords, API keys, TLS certificates) |
+| **Storage** | base64 encoding (for transport, not security) | base64 encoding + optional encryption at rest in etcd |
+| **RBAC** | Standard access control | Often restricted — limit who can `get`/`list` secrets |
+| **Visibility in `describe pod`** | Values shown when used as env vars | Hidden when mounted as files; secret names shown for env vars |
+| **Audit trail** | Logged as normal resources | Often excluded from logs by audit policies |
+
+**Rule of thumb:** If you wouldn't want it in your Slack history, put it in a Secret.
 
 ### ConfigMap Hot-Reload — Three Options
 
@@ -672,6 +689,11 @@ Kubernetes Secrets exist as a dedicated resource type for sensitive data. They'r
 
 Here is the critical thing to understand: **Kubernetes Secrets are not encrypted by default.** When you create a Secret, Kubernetes stores the values as base64-encoded strings in etcd. Base64 is an encoding scheme — it's how binary data is represented as text. It is not encryption. Anyone who can run `kubectl get secret` and knows how to run `base64 --decode` can read your secret values in plaintext.
 
+**Quick start — apply a Secret:**
+```bash
+kubectl apply -f secret.yaml -n hello-app
+```
+
 You can verify this yourself right now:
 
 ```bash
@@ -803,7 +825,7 @@ With mounted files, `kubectl describe pod` shows only the mount path, not any in
 
 ### Production Approach: External Secrets Operator
 
-The most robust approach for production: don't store sensitive values in Kubernetes Secrets at all. Store them in a dedicated secrets manager — AWS Secrets Manager, GCP Secret Manager, or HashiCorp Vault — and use the **External Secrets Operator** to sync them into Kubernetes Secrets automatically.
+The most robust approach for production: don't store sensitive values in Kubernetes Secrets at all. Store them in a dedicated secrets manager — AWS Secrets Manager, GCP Secret Manager, HashiCorp Vault, or Azure Key Vault — and use the **External Secrets Operator** to sync them into Kubernetes Secrets automatically.
 
 ```bash
 # Install External Secrets Operator
@@ -812,6 +834,8 @@ helm install external-secrets external-secrets/external-secrets \
   --namespace external-secrets \
   --create-namespace
 ```
+
+**Supported providers:** AWS Secrets Manager, GCP Secret Manager, Azure Key Vault, HashiCorp Vault, IBM Secrets Manager, Akeyless, Webhook (generic), and more. The configuration varies by provider — we show AWS below as the most common, but the pattern is similar for all.
 
 Configure a connection to AWS Secrets Manager:
 ```yaml
@@ -842,6 +866,8 @@ metadata:
   namespace: hello-app
 spec:
   refreshInterval: 1h             # Re-sync from AWS every hour
+                                  # WARNING: Too low (< 5m) = API rate limits + increased costs.
+                                  # Too high (> 1h) = stale secrets. 15-60min is typical.
 
   secretStoreRef:
     name: aws-secretsmanager
@@ -1024,12 +1050,14 @@ spec:
   limits:
   - type: Container
     # Applied to every container that doesn't specify its own resources
+    # NOTE: These must be realistic for your workload. A Spring Boot app
+    # needs ~512Mi minimum (see line 967). Too-low defaults cause OOMKilled.
     default:
-      cpu: "200m"
-      memory: "256Mi"
+      cpu: "500m"
+      memory: "512Mi"
     defaultRequest:
-      cpu: "100m"
-      memory: "128Mi"
+      cpu: "250m"
+      memory: "256Mi"
     # Absolute maximum any single container can request
     max:
       cpu: "4"
@@ -1328,22 +1356,48 @@ spring:
 
 To verify your probes behave correctly, simulate failures:
 
-```bash
-# Simulate a readiness failure — watch pod leave Service endpoints
-# (Using Spring Boot Actuator's management endpoint to manually change health state)
-kubectl exec -it <pod-name> -n hello-app -- \
-  curl -X POST http://localhost:8080/actuator/health  # check current state
+**Method 1: Kill the database connection (tests readiness probe)**
 
-# Watch endpoints update in real time
+If you have a custom `DatabaseHealthIndicator`, stop the database or block network access:
+```bash
+# Watch the pod's readiness status
+kubectl get pods -n hello-app -w
+
+# Watch Service endpoints — pod should disappear when DB is unreachable
 kubectl get endpoints hello-app-service -n hello-app -w
 
-# Trigger graceful shutdown and watch the rolling restart
-kubectl rollout restart deployment/hello-app -n hello-app
-kubectl rollout status deployment/hello-app -n hello-app
+# Restore the database and watch the pod recover (no restart needed)
+```
 
-# Observe probe events in pod description
+**Method 2: Use Spring Boot Actuator's state endpoint (requires actuator extras)**
+
+Add the `spring-boot-starter-actuator` with full health management:
+```java
+// Temporarily force readiness to fail by setting a "degraded" flag
+// This requires a custom HealthIndicator that reads a toggle flag
+```
+
+**Method 3: Break the probe endpoint directly**
+
+Temporarily modify the Deployment to point the probe at a wrong path:
+```bash
+kubectl edit deployment/hello-app -n hello-app
+# Change readiness probe path from /actuator/health/readiness to /nonexistent
+# Save and watch the pod transition to 0/1 (not ready)
+# Then revert and watch it recover
+```
+
+**Observe the results:**
+```bash
+# Pod should show 0/1 READY when probe fails
+kubectl get pods -n hello-app
+
+# Events section shows probe failures
 kubectl describe pod <pod-name> -n hello-app
-# Look for: Liveness probe failed / Readiness probe failed in Events section
+# Look for: "Readiness probe failed" in Events
+
+# Pod disappears from Service endpoints when not ready
+kubectl get endpoints hello-app-service -n hello-app -w
 ```
 
 ---
@@ -1481,6 +1535,9 @@ helm history hello-app-prod -n production
 | Quota exceeded — pod won't schedule | Namespace ResourceQuota reached | `kubectl describe resourcequota -n <ns>` | Reduce requests, or ask cluster admin to increase quota |
 | `base64: invalid input` when decoding a secret | Extra newline from `base64` without `-w 0` on Linux | N/A | Use `base64 -w 0` when encoding; use `base64 -d` (not `--decode`) on macOS |
 | ExternalSecret stuck in `SecretSyncedError` | Wrong IAM permissions or wrong secret path in secrets manager | `kubectl describe externalsecret -n <ns>` | Check IAM policy allows `secretsmanager:GetSecretValue` for the correct ARN |
+| `helm upgrade` fails with "release not found" | Using `upgrade` before the release exists | `helm list -n <ns>` | Use `helm upgrade --install` which does both in one command |
+| ConfigMap key not found in pod | Pod references a key that doesn't exist in the ConfigMap | `kubectl get configmap <name> -n <ns> -o yaml` | Verify the key name matches exactly; check for typos |
+| Service has no endpoints (`<none>`) | Pod labels don't match Service selector | `kubectl get pods --show-labels -n <ns>` | Make sure pod labels match `spec.selector` in Service |
 
 ---
 
@@ -1493,10 +1550,50 @@ Push your `hello-app:1.0.0` image to Docker Hub (or another registry of your cho
 Add a new endpoint `GET /api/feature` that returns the value of a `FEATURE_FLAGS` environment variable. Create a ConfigMap with `FEATURE_FLAGS=new-ui:false,dark-mode:true`. Inject it as an environment variable. Verify the endpoint returns the correct value. Then update the ConfigMap value, run `kubectl rollout restart`, and confirm the new value is returned without rebuilding the image.
 
 **Exercise 3 — Resource limits experiment:**
-Deploy with `memory.limits: 128Mi`. Generate load against the endpoint in a loop. Watch `kubectl top pods` as memory climbs. When the pod is OOMKilled, observe the `RESTARTS` counter in `kubectl get pods` increment. Now set a reasonable limit based on what you observed in `docker stats`, redeploy, and confirm stability under load.
+Deploy with `memory.limits: 128Mi`. Generate load using the load generator from Chapter 5:
+
+```bash
+kubectl run load-generator --image=busybox --rm -it --restart=Never -- \
+  /bin/sh -c 'while true; do wget -q -O- http://hello-app-service:8080/api/hello; done'
+```
+
+Watch `kubectl top pods -n hello-app` as memory climbs. When the pod is OOMKilled, observe the `RESTARTS` counter in `kubectl get pods` increment. Now set a reasonable limit based on what you observed in `docker stats` (typically 512Mi–1Gi for Spring Boot), redeploy, and confirm stability under load.
 
 **Exercise 4 — Secret rotation:**
-Create a Kubernetes Secret with a database password. Reference it in the Deployment as a mounted file. Write a small Spring Boot service endpoint that reads and returns the password from the file (masked — show only the first 3 characters). Update the Secret value with `kubectl create secret --dry-run=client -o yaml | kubectl apply -f -`. Run `kubectl rollout restart` and verify the new value is returned. Now try the same experiment with the password as an environment variable — notice the difference in behaviour.
+Create a Kubernetes Secret with a test value (e.g., `API_TOKEN=abc123`). Reference it in the Deployment as a mounted file at `/app/secrets/api_token`. Add an endpoint `GET /api/token-info` that returns the **file's SHA256 hash** (not the actual value — never expose secrets via HTTP). 
+
+```java
+@GetMapping("/token-info")
+public Map<String, String> getTokenInfo() throws Exception {
+    String content = Files.readString(Path.of("/app/secrets/api_token")).trim();
+    String hash = DigestUtils.sha256Hex(content);  // Apache Commons Codec
+    return Map.of("hash", hash, "length", String.valueOf(content.length()));
+}
+```
+
+Update the Secret with a new value:
+```bash
+kubectl create secret generic app-secrets \
+  --from-literal=API_TOKEN=xyz789 \
+  --dry-run=client -o yaml | kubectl apply -f -
+```
+
+Run `kubectl rollout restart deployment/hello-app -n hello-app` and verify the hash changes. Now try the same experiment with the secret as an environment variable — notice that `kubectl describe pod` shows the variable exists (but not its value), whereas mounted files show no indication of the secret's contents.
 
 **Exercise 5 — Probe failure simulation:**
 Configure a custom readiness indicator that checks for an environment variable `READY=true`. When `READY` is absent or false, the indicator returns `DOWN`. Deploy with `READY=true`. Then update the ConfigMap to set `READY=false` and rollout restart. Watch `kubectl get endpoints` in one terminal and `kubectl get pods -w` in another. Observe the pod transition to `0/1` (readiness failing) and disappear from Service endpoints. Restore `READY=true` and watch it recover — without a restart, just by the probe passing again.
+
+---
+
+## What's Next?
+
+You now have the core building blocks for production Kubernetes deployments: configuration externalized with ConfigMaps, secrets managed securely, resource boundaries enforced, and self-healing applications with proper health probes.
+
+**Part 3: Helm Deep Dive** takes your Helm skills beyond basic templating:
+- **Go template engine** — pipelines, conditionals, loops, and the `nindent` function that trips everyone up
+- **Named templates (`_helpers.tpl`)** — DRY patterns for labels, selectors, and shared snippets
+- **Subcharts** — deploy postgresql, redis, or rabbitmq alongside your app as dependencies
+- **Hooks** — run database migrations before new pods start serving traffic
+- **Advanced patterns** — feature flags, conditional resources, and generating random passwords
+
+By the end of Part 3, you'll write production-grade Helm charts that handle complex deployments with multiple services, dependencies, and lifecycle hooks.
