@@ -97,7 +97,7 @@
 
 ---
 
-### Part 2: Kubernetes Core Concepts — Beyond Hello World
+### [Part 2: Kubernetes Core Concepts — Beyond Hello World](articles/02-kubernetes-core-concepts.md)
 **Level:** Beginner–Intermediate  
 **Goal:** Understand the building blocks every real deployment needs
 
