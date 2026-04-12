@@ -460,6 +460,13 @@ rules:
     name:
       matches: "^(.*)_seconds_count"
       as: "${1}_per_second"     # → http_server_requests_per_second
+    # metricsQuery uses the Prometheus Adapter's own Go template syntax — <<...>> —
+    # which is distinct from PromQL's {label="value"} syntax. The adapter expands
+    # these placeholders before sending the query to Prometheus:
+    #   <<.Series>>        → the metric name from seriesQuery
+    #   <<.LabelMatchers>> → the label selectors the adapter adds for the specific
+    #                        pod/namespace being queried
+    #   <<.GroupBy>>       → the "group by" dimension (pod or namespace)
     metricsQuery: |
       sum(rate(<<.Series>>{<<.LabelMatchers>>}[2m])) by (<<.GroupBy>>)
 ```

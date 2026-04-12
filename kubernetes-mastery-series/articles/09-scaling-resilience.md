@@ -1234,6 +1234,10 @@ kubectl argo rollouts undo myapp -n production
 
 **The non-obvious requirement:** Canary deployments with Argo Rollouts require two Services — a `stable` Service pointing to old pods and a `canary` Service pointing to new pods. Argo Rollouts manipulates the replica counts and the traffic-splitting mechanism (nginx-ingress or Istio) to split traffic between them. This Service setup is mandatory but is not required for blue-green.
 
+Why two Services? nginx's traffic splitting works at the Service level, not the pod level. The Ingress controller routes a percentage of incoming requests to one backend Service or another — it has no mechanism to split traffic across individual pods within a single Service based on a weight. Argo Rollouts needs two distinct Services as targets so it can tell nginx "send 10% here, 90% there." Without them, there is nothing to aim the two traffic weights at.
+
+Blue-green deployments don't need this because they never split traffic by percentage. The switch is atomic — 100% goes to blue, then 100% goes to green. All that requires is updating a single Service's pod selector, which Argo Rollouts does by changing the `activeService` selector labels at promotion time. There is no fractional routing, so no second Service is needed.
+
 ```yaml
 # rollout-canary.yaml
 apiVersion: argoproj.io/v1alpha1

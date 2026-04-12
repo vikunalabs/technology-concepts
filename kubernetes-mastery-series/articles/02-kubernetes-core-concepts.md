@@ -865,9 +865,12 @@ metadata:
   name: app-secrets
   namespace: hello-app
 spec:
-  refreshInterval: 1h             # Re-sync from AWS every hour
-                                  # WARNING: Too low (< 5m) = API rate limits + increased costs.
-                                  # Too high (> 1h) = stale secrets. 15-60min is typical.
+  refreshInterval: 1h             # How often to re-sync from AWS Secrets Manager.
+                                  # Each refresh calls the AWS API once per ExternalSecret object —
+                                  # with many secrets and a short interval, costs and rate limits
+                                  # add up quickly. Under 5 minutes is almost never justified.
+                                  # Over 1 hour means a rotated secret takes a long time to
+                                  # propagate. 15–60 minutes covers most production needs.
 
   secretStoreRef:
     name: aws-secretsmanager

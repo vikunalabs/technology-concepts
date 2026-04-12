@@ -1,13 +1,9 @@
 # Part 1: Spring Boot + Docker + Helm — Your First Cloud-Ready App
 
 > **Series:** Kubernetes Mastery — From Hello World to Production
-
 > **Level:** Complete Beginner — no prior Kubernetes or Docker experience needed
-
 > **Prerequisites:** Java 17+, Maven, a terminal
-
 > **Time to complete:** 3–4 hours
-
 > **What you'll build:** A Spring Boot REST API, containerized with Docker, deployed to Kubernetes using Helm
 
 ---

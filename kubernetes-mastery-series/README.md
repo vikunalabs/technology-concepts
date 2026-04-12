@@ -182,7 +182,7 @@
 
 ---
 
-### Part 3: Helm Deep Dive — Beyond Basic Templating
+### [Part 3: Helm Deep Dive — Beyond Basic Templating](articles/03-helm-deep-dive.md)
 **Level:** Intermediate  
 **Goal:** Write production-grade Helm charts from scratch
 
@@ -265,7 +265,7 @@
 
 ---
 
-### Part 4: Container Registry & CI/CD — Automating Your Deployments
+### [Part 4: Container Registry & CI/CD — Automating Your Deployments](articles/04-container-registry-and-cicd.md)
 **Level:** Intermediate  
 **Goal:** Never manually deploy again — every git push triggers a pipeline
 
@@ -331,7 +331,7 @@
 
 ---
 
-### Part 5: Networking & Ingress — Making Your App Accessible
+### [Part 5: Networking & Ingress — Making Your App Accessible](articles/05-networking-ingress.md)
 **Level:** Intermediate  
 **Goal:** Expose services securely with TLS, DNS, and proper routing
 
@@ -432,7 +432,7 @@
 
 ---
 
-### Part 6: Storage & Stateful Apps — Managing Data in Kubernetes
+### [Part 6: Storage & Stateful Apps — Managing Data in Kubernetes](articles/06-storage-stateful-apps.md)
 **Level:** Intermediate–Advanced  
 **Goal:** Run production databases and stateful workloads in Kubernetes
 
@@ -522,7 +522,7 @@
 
 ---
 
-### Part 7: Security — Zero-Trust Kubernetes
+### [Part 7: Security — Zero-Trust Kubernetes](articles/07-security.md)
 **Level:** Advanced  
 **Goal:** Harden a cluster against internal and external threats
 
@@ -614,7 +614,7 @@
 
 ---
 
-### Part 8: Observability — Monitoring, Logging, and Tracing
+### [Part 8: Observability — Monitoring, Logging, and Tracing](articles/08-observability.md)
 **Level:** Advanced  
 **Goal:** Know what's happening in your cluster at all times
 
@@ -719,7 +719,7 @@
 
 ---
 
-### Part 9: Scaling & Resilience — Building Self-Healing Systems
+### [Part 9: Scaling & Resilience — Building Self-Healing Systems](articles/09-scaling-resilience.md)
 **Level:** Advanced  
 **Goal:** Systems that handle traffic spikes, failures, and maintenance without manual intervention
 
@@ -809,7 +809,7 @@
 
 ---
 
-### Part 10: Production Playbook — From Development to Production
+### [Part 10: Production Playbook — From Development to Production](articles/10-production-playbook.md)
 **Level:** Expert  
 **Goal:** A complete reference for running production Kubernetes workloads
 
@@ -893,7 +893,7 @@
 
 ```
 kubernetes-mastery-series/
-├── README.md                          ← This file (the plan)
+├── README.md
 ├── 01-spring-boot-docker-helm-basics.md
 ├── 02-kubernetes-core-concepts.md
 ├── 03-helm-deep-dive.md
