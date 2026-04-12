@@ -1863,3 +1863,20 @@ Write a `pre-upgrade` hook for your chart that runs a Job printing `"Running dat
 
 **Exercise 5 — `helm diff` in practice:**
 Install `helm diff`. Make three simultaneous changes to `values-prod.yaml`: change the image tag, increase the replica count, and add a new environment variable. Before running `helm upgrade`, run `helm diff upgrade` and verify all three changes appear in the diff output. Then make the upgrade and use `helm history` and `helm get manifest` to confirm what changed.
+
+---
+
+## What's Next?
+
+You now have production-grade Helm skills that go far beyond basic templating. You can manage complex multi-service applications with dependency management, lifecycle hooks, and environment-specific configurations.
+
+**Part 4: Container Registry and CI/CD** builds on these Helm skills to show you how to:
+- Automate image building and pushing to registries
+- Integrate Helm with GitOps workflows
+- Use `helm diff` in pull request reviews for safe production changes
+- Implement automated testing and validation in your CI/CD pipeline
+- Deploy to multiple environments with promotion strategies
+- Use Helm OCI support for storing charts in registries
+- Implement blue/green and canary deployment strategies with Helm
+
+By the end of Part 4, you'll have a complete CI/CD pipeline that takes your code from commit to production deployment with automated testing, security scanning, and gradual rollout patterns.
