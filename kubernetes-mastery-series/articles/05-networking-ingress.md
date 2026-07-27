@@ -124,7 +124,7 @@ spec:
 
 The port range 30000–32767 is reserved specifically for NodePort Services by Kubernetes. Ports below 30000 are used by the OS and other processes — Kubernetes avoids them to prevent conflicts.
 
-NodePort is not production-ready for two reasons: you expose node IPs directly (security concern), and you need to know which node is running the pod (no DNS name, just `<node-ip>:30080`). For local testing with Minikube, `minikube service users-service` handles the NodePort access for you.
+NodePort is not production-ready for two reasons: you expose node IPs directly (security concern), and you need to know which node is running the pod (no DNS name, just `<node-ip>:30080`). For local testing with kind, node IPs aren't reachable from your laptop at all — kind's nodes are Docker containers on a private Docker network — so the simplest way to reach a NodePort Service is `kubectl port-forward service/users-service 8080:8080`, which we already used in Part 1.
 
 ### LoadBalancer — Cloud Load Balancer per Service
 
@@ -234,14 +234,23 @@ This separation means you choose which controller to run based on your needs. Th
 
 ### Installing nginx-ingress
 
-**Minikube (built-in addon):**
+**kind:** kind ships a manifest variant of ingress-nginx specifically patched to work with its Docker-based nodes — it targets nodes labeled `ingress-ready=true` and binds to the host ports we mapped when creating the cluster back in Part 1 (`kind-config.yaml`'s `extraPortMappings`). If you didn't set those up, go back and re-create the cluster with that config first — they can't be added to a running cluster.
+
 ```bash
-minikube addons enable ingress
+kubectl apply -f https://raw.githubusercontent.com/kubernetes/ingress-nginx/main/deploy/static/provider/kind/deploy.yaml
+
+# Wait for the controller pod to be ready before continuing
+kubectl wait --namespace ingress-nginx \
+  --for=condition=ready pod \
+  --selector=app.kubernetes.io/component=controller \
+  --timeout=90s
 
 # Verify
 kubectl get pods -n ingress-nginx
 kubectl get svc -n ingress-nginx
 ```
+
+Once this is running, anything you send to `localhost:80` or `localhost:443` on your laptop reaches the ingress controller inside the kind cluster — that's the `extraPortMappings` from Part 1 doing their job.
 
 **All cloud providers via Helm:**
 ```bash
@@ -781,18 +790,18 @@ kubectl get secret api-myapp-com-tls -n production -o jsonpath='{.data.tls\.crt}
 
 ### Testing Locally Without a Real Domain — nip.io
 
-When testing on Minikube or a cluster without a real domain, you need a URL that resolves to your cluster IP but looks like a real hostname (required for HTTP-01 validation and for Ingress host matching).
+When testing on kind or a cluster without a real domain, you need a URL that resolves to your cluster IP but looks like a real hostname (required for HTTP-01 validation and for Ingress host matching).
 
 [nip.io](https://nip.io) provides wildcard DNS based on IP address: `anything.192.168.1.100.nip.io` always resolves to `192.168.1.100`. No configuration needed.
 
+With kind, this is actually simpler than on most local clusters: because of the `extraPortMappings` we configured in Part 1, the ingress controller is already reachable at `127.0.0.1` on your laptop — there's no separate cluster IP to look up like there would be with a VM-based tool.
+
 ```bash
-# Get your Minikube IP
-MINIKUBE_IP=$(minikube ip)
-echo "Minikube IP: $MINIKUBE_IP"
-# e.g., 192.168.49.2
+# No "get cluster IP" step needed — kind's ingress is already on localhost,
+# thanks to the extraPortMappings configured when the cluster was created.
 
 # Your test domain (no registration needed — nip.io handles DNS)
-# api.192.168.49.2.nip.io → 192.168.49.2
+# api.127.0.0.1.nip.io → 127.0.0.1
 
 # Use this as your Ingress host
 ```
@@ -801,10 +810,10 @@ echo "Minikube IP: $MINIKUBE_IP"
 spec:
   tls:
   - hosts:
-    - api.192.168.49.2.nip.io
+    - api.127.0.0.1.nip.io
     secretName: nip-tls
   rules:
-  - host: api.192.168.49.2.nip.io
+  - host: api.127.0.0.1.nip.io
     http:
       paths:
       - path: /
@@ -968,19 +977,36 @@ Network Policies are enforced by the CNI (Container Network Interface) plugin �
 
 CNIs that enforce Network Policies: **Calico** (most common), **Cilium** (eBPF-based, excellent performance), **Weave Net**, **Antrea**.
 
-CNIs that do NOT enforce Network Policies: **Flannel** (the default on many simple clusters, including basic Minikube), **kubenet**.
+CNIs that do NOT enforce Network Policies: **Flannel**, **kubenet**, and **kindnet** — kind's own default CNI, which handles basic pod networking but does not enforce Network Policies at all.
 
 Check your CNI:
 ```bash
-kubectl get pods -n kube-system | grep -E "calico|cilium|weave|flannel"
+kubectl get pods -n kube-system | grep -E "calico|cilium|weave|flannel|kindnet"
 ```
 
-For Minikube with Network Policy support:
-```bash
-minikube start --cni=calico
-# Or
-minikube start --cni=cilium
+For kind with Network Policy support, you need to disable the default CNI at cluster-creation time (this can't be changed on a running cluster, same as the ingress port mappings in Part 1) and install a policy-enforcing CNI yourself:
+
+```yaml
+# kind-config-netpol.yaml
+kind: Cluster
+apiVersion: kind.x-k8s.io/v1alpha4
+name: hello-app-netpol
+networking:
+  disableDefaultCNI: true   # Skip kindnet — we're installing Calico instead
 ```
+
+```bash
+kind create cluster --config kind-config-netpol.yaml
+
+# Install Calico (Tigera's operator-based install works well with kind)
+kubectl create -f https://raw.githubusercontent.com/projectcalico/calico/v3.28.0/manifests/tigera-operator.yaml
+kubectl create -f https://raw.githubusercontent.com/projectcalico/calico/v3.28.0/manifests/custom-resources.yaml
+
+# Wait for Calico to be ready before applying any Network Policies
+kubectl wait --for=condition=ready pod -l k8s-app=calico-node -n calico-system --timeout=120s
+```
+
+This is a separate cluster from the one we created in Part 1, since disabling the default CNI is only meaningful at creation time and isn't something the ingress-focused cluster from Part 1 was configured for. In a real project you'd decide on your CNI and ingress requirements together, upfront, in one `kind-config.yaml`.
 
 ### Default Deny-All — The Foundation
 
@@ -1724,7 +1750,7 @@ networkPolicy:
 ## Practice Exercises
 
 **Exercise 1 — End-to-end Ingress with TLS:**
-Deploy two services in Minikube — `api-service` and `web-service`. Create an Ingress that routes `api.192.168.X.X.nip.io/api` to `api-service` and `www.192.168.X.X.nip.io` to `web-service`. Install cert-manager and create a staging ClusterIssuer. Add the `cert-manager.io/cluster-issuer` annotation and watch the certificate issue. Verify with `kubectl get certificate` and `curl -k https://api.192.168.X.X.nip.io/api/hello` (`-k` to skip verification for staging cert).
+Deploy two services in your kind cluster — `api-service` and `web-service`. Create an Ingress that routes `api.127.0.0.1.nip.io/api` to `api-service` and `www.127.0.0.1.nip.io` to `web-service`. Install cert-manager and create a staging ClusterIssuer. Add the `cert-manager.io/cluster-issuer` annotation and watch the certificate issue. Verify with `kubectl get certificate` and `curl -k https://api.127.0.0.1.nip.io/api/hello` (`-k` to skip verification for staging cert).
 
 **Exercise 2 — Path rewriting:**
 Deploy a simple service that only knows about paths starting with `/users` (no `/api` prefix). Create an Ingress that accepts requests at `/api/users/.*` and rewrites them to `/users/.*` before forwarding. Test with `curl api.myapp.com/api/users/123` and verify the backend receives `GET /users/123`. Check the nginx controller logs to see the rewritten path.
@@ -1736,4 +1762,4 @@ In a test namespace, apply a default-deny-all policy. Then deploy two pods: `pod
 If you have a domain in Route53 or Cloudflare, install ExternalDNS in your cluster. Create an Ingress with a hostname in your domain. Watch `kubectl logs -n external-dns deploy/external-dns` as it creates the DNS record. Verify with `dig api.yourdomain.com`. Delete the Ingress and observe the record being cleaned up (`policy=sync` required).
 
 **Exercise 5 — Istio traffic splitting:**
-Install Istio in Minikube. Deploy two versions of the same service — `v1` and `v2` with different response text. Create a `VirtualService` that sends 90% of traffic to `v1` and 10% to `v2`. Run `for i in $(seq 1 100); do curl -s http://api.myapp.com/hello; done | sort | uniq -c` and verify the ratio is approximately 90/10. Gradually shift weight to 50/50, then 0/100. Practice the Istio canary promotion workflow.
+Install Istio in your kind cluster. Deploy two versions of the same service — `v1` and `v2` with different response text. Create a `VirtualService` that sends 90% of traffic to `v1` and 10% to `v2`. Run `for i in $(seq 1 100); do curl -s http://api.myapp.com/hello; done | sort | uniq -c` and verify the ratio is approximately 90/10. Gradually shift weight to 50/50, then 0/100. Practice the Istio canary promotion workflow.

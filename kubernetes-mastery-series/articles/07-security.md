@@ -261,12 +261,16 @@ openssl genrsa -out alice.key 2048
 openssl req -new -key alice.key -out alice.csr -subj "/CN=alice/O=platform-team"
 # /CN is the username, /O is the group
 
-# Sign the CSR with the cluster CA (for Minikube)
-kubectl get secret -n kube-system | grep ca
-# (Minikube CA is at ~/.minikube/ca.crt and ~/.minikube/ca.key)
+# Sign the CSR with the cluster CA (for kind)
+# kind's CA lives inside the control-plane node's container filesystem,
+# not on your host — copy it out first. "hello-app-control-plane" is the
+# container name kind creates for the cluster we set up in Part 1
+# (<cluster-name>-control-plane).
+docker cp hello-app-control-plane:/etc/kubernetes/pki/ca.crt ./kind-ca.crt
+docker cp hello-app-control-plane:/etc/kubernetes/pki/ca.key ./kind-ca.key
 
 openssl x509 -req -in alice.csr \
-  -CA ~/.minikube/ca.crt -CAkey ~/.minikube/ca.key \
+  -CA ./kind-ca.crt -CAkey ./kind-ca.key \
   -CAcreateserial -out alice.crt -days 365
 
 # Add alice to your kubeconfig
@@ -275,7 +279,7 @@ kubectl config set-credentials alice \
   --client-key=alice.key
 
 kubectl config set-context alice-context \
-  --cluster=minikube \
+  --cluster=kind-hello-app \
   --user=alice
 
 # Test as alice

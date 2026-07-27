@@ -20,7 +20,7 @@ This part fills those gaps. Each chapter introduces one core concept — what it
 
 ### Why the Cluster Cannot Use Your Laptop's Images
 
-In Part 1 we used a trick: we pointed Docker at Minikube's internal daemon (`eval $(minikube docker-env)`) so the image was built directly inside the cluster. This works for a single-node local setup. It breaks everywhere else.
+In Part 1 we used a trick: we built the image normally, then explicitly copied it into the cluster with `kind load docker-image`. This works because kind is a single-node (or small, fully-local) setup where you have direct access to every node's image store. It breaks everywhere else.
 
 A real Kubernetes cluster has multiple nodes — often dozens or hundreds. Each node is a separate machine. When Kubernetes schedules a pod onto a node, that node's `kubelet` process needs to pull the container image. It cannot reach your laptop. It needs a central, always-available location to pull from. That location is a **container registry**.
 

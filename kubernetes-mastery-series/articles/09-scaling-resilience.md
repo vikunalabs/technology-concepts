@@ -83,14 +83,16 @@ HPA requires the Metrics Server to read CPU and memory usage from pods:
 ```bash
 # Check if already installed
 kubectl top pods -A
-# If this returns data, Metrics Server is running.
+# If this returns data, Metrics Server is running — if you followed Part 1,
+# it already is, and you can skip straight to the HPA section below.
 # If it returns "Error from server (ServiceUnavailable)", install it.
 
-# Minikube
-minikube addons enable metrics-server
-
-# All other clusters
 kubectl apply -f https://github.com/kubernetes-sigs/metrics-server/releases/latest/download/components.yaml
+
+# kind's kubelet certs aren't valid for metrics-server's default TLS
+# verification — same fix as in Part 1.
+kubectl patch deployment metrics-server -n kube-system --type=json \
+  -p '[{"op":"add","path":"/spec/template/spec/containers/0/args/-","value":"--kubelet-insecure-tls"}]'
 
 # Verify
 kubectl get deployment metrics-server -n kube-system

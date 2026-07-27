@@ -853,28 +853,75 @@ When Kubernetes needs to stop a pod (rolling update, scale-down, node drain), it
 
 The `preStop` sleep and `terminationGracePeriodSeconds` together ensure in-flight requests have time to complete before the process exits.
 
-### Installing and Starting Minikube
+### Installing and Starting a kind Cluster
 
-Minikube runs a single-node Kubernetes cluster on your laptop inside a VM or Docker container. It's the standard way to develop Kubernetes locally.
+[kind](https://kind.sigs.k8s.io/) (Kubernetes IN Docker) runs a Kubernetes cluster on your laptop by running each "node" as a Docker container, rather than a full VM. It's lighter and faster to start than VM-based local clusters, and multi-node clusters — which we'll use in Part 9 to demonstrate real pod scheduling — are just a config file away instead of a separate feature flag. It's also what most CI pipelines use to test Kubernetes manifests, so the workflow you learn here transfers directly.
+
+Unlike some local-cluster tools, kind doesn't ship one-command addons for things like Ingress or metrics-server — you install those yourself, the same way you would on a real cluster. That's slightly more typing up front, but it means nothing about this series is Minikube-specific magic; every command here also works on a real cluster.
+
+Create a cluster config file. We set this up now, at cluster-creation time, because the port mappings below can't be added to a running cluster later — we'll need them in Part 5 when we install an Ingress controller.
+
+**`kind-config.yaml`:**
+```yaml
+kind: Cluster
+apiVersion: kind.x-k8s.io/v1alpha4
+name: hello-app
+nodes:
+- role: control-plane
+  # WHY this label: the ingress-nginx manifest we'll apply in Part 5 targets
+  # nodes labeled ingress-ready=true — this is how it knows where to run.
+  kubeadmConfigPatches:
+  - |
+    kind: InitConfiguration
+    nodeRegistration:
+      kubeletExtraArgs:
+        node-labels: "ingress-ready=true"
+  # WHY extraPortMappings: kind nodes are Docker containers with their own
+  # network namespace. Without an explicit mapping, nothing on your laptop's
+  # localhost:80/443 reaches the cluster. This maps the host's 80/443 to the
+  # control-plane container's 80/443 — the ports an Ingress controller listens on.
+  extraPortMappings:
+  - containerPort: 80
+    hostPort: 80
+    protocol: TCP
+  - containerPort: 443
+    hostPort: 443
+    protocol: TCP
+```
 
 ```bash
-# Start Minikube with enough resources for our experiments
-minikube start --cpus=4 --memory=8192 --driver=docker
+# Create the cluster from the config above
+kind create cluster --config kind-config.yaml
 
 # Verify the cluster is running
-kubectl cluster-info
+kubectl cluster-info --context kind-hello-app
 # Expected: Kubernetes control plane is running at https://127.0.0.1:PORT
 
 kubectl get nodes
-# Expected: NAME       STATUS   ROLES           AGE   VERSION
-#           minikube   Ready    control-plane   Xm    v1.X.X
+# Expected: NAME                     STATUS   ROLES           AGE   VERSION
+#           hello-app-control-plane  Ready    control-plane   Xm    v1.X.X
 ```
 
-Enable the Ingress addon (we'll use it in Part 5):
+`kind create cluster` sets your `kubectl` context to `kind-hello-app` automatically — you don't need a separate step to point `kubectl` at it.
+
+Install metrics-server (we'll use `kubectl top pods` later in this article, and again in Part 9):
 ```bash
-minikube addons enable ingress
-minikube addons enable metrics-server
+kubectl apply -f https://github.com/kubernetes-sigs/metrics-server/releases/latest/download/components.yaml
+
+# WHY this patch is needed: metrics-server validates the kubelet's TLS
+# certificate by default. kind's kubelet certs aren't issued for a hostname
+# metrics-server recognizes, so validation fails out of the box. This flag
+# skips that check — acceptable for a local dev cluster, never do this in
+# a real cluster (use properly signed kubelet certs there instead).
+kubectl patch deployment metrics-server -n kube-system --type=json \
+  -p '[{"op":"add","path":"/spec/template/spec/containers/0/args/-","value":"--kubelet-insecure-tls"}]'
+
+# Give it a few seconds, then verify
+kubectl get deployment metrics-server -n kube-system
+kubectl top nodes
 ```
+
+We'll install the actual Ingress controller in Part 5, once we introduce the `Ingress` resource — the port mappings and `ingress-ready` label configured above are what make that a one-command install when we get there.
 
 ### Writing Kubernetes Manifests
 
@@ -950,7 +997,7 @@ spec:
       - name: hello-app
         image: hello-app:1.0.0
         # IfNotPresent: use local image if available, otherwise pull from registry.
-        # This is what allows us to use a locally built image in Minikube.
+        # This is what allows us to use a locally built image loaded into kind.
         imagePullPolicy: IfNotPresent
         ports:
         - containerPort: 8080
@@ -1037,20 +1084,17 @@ spec:
 
 ### Deploy and Verify
 
-For Minikube, we need to make our locally built image available to the cluster. The easiest way is to build the image directly inside Minikube's Docker daemon:
+kind's nodes are Docker containers with their own isolated image store — they can't see images sitting in your regular local Docker daemon. Build the image normally, then explicitly load it into the cluster:
 
 ```bash
-# Point your Docker CLI at Minikube's Docker daemon
-eval $(minikube docker-env)
-
-# Build inside Minikube — this image is now directly available to Kubernetes
+# Build the image with your normal, unmodified Docker daemon — nothing special needed
 docker build -t hello-app:1.0.0 .
 
-# When done, reset to your normal Docker daemon:
-# eval $(minikube docker-env --unset)
-# TIP: Run this reset after your session — otherwise your Docker CLI will keep
-# talking to Minikube's daemon and you won't be able to run normal docker commands.
+# Load it into every node of the kind cluster
+kind load docker-image hello-app:1.0.0 --name hello-app
 ```
+
+`kind load docker-image` copies the image directly into each node's containerd image store. No registry involved, no daemon-switching to remember to undo — the image is either loaded into the cluster or it isn't, which makes this a bit less error-prone than the "did I forget to reset my Docker context" failure mode of daemon-pointing approaches. If you rebuild the image after a code change, you must re-run `kind load docker-image` — Kubernetes won't pick up the new image otherwise, since as far as it's concerned the tag `hello-app:1.0.0` hasn't changed.
 
 Apply the manifests:
 ```bash
@@ -1548,7 +1592,7 @@ helm package hello-app-chart/
 
 ### Why a Registry?
 
-When you built the Docker image earlier, it existed only on your laptop. Minikube worked because we pointed Docker at Minikube's internal daemon — effectively building the image inside the cluster. But in a real environment with a multi-node cluster, there's no shared Docker daemon. Every node needs to pull the image from a central location: a **container registry**.
+When you built the Docker image earlier, it existed only on your laptop. `kind load docker-image` worked because it explicitly copied the image into our single kind cluster's nodes — a manual but direct hand-off. But in a real environment with a multi-node cluster (and no `kind load` equivalent), there's no way to hand-deliver an image to every node individually at scale. Every node needs to pull the image from a central location: a **container registry**.
 
 ```
 Your laptop          Registry              Kubernetes cluster
@@ -1640,9 +1684,9 @@ Here's the full sequence from code to running cluster:
 ./mvnw clean package -DskipTests
 # Gradle equivalent: ./gradlew clean build -x test
 
-# 2. Build the Docker image inside Minikube
-eval $(minikube docker-env)
+# 2. Build the Docker image and load it into kind
 docker build -t yourusername/hello-app:1.0.0 .
+kind load docker-image yourusername/hello-app:1.0.0 --name hello-app
 
 # 3. Validate the Helm chart
 helm lint hello-app-chart/
@@ -1698,7 +1742,7 @@ By the end of this part, you should have:
 - [ ] Kubernetes Deployment with all three probe types configured
 - [ ] Kubernetes Service (ClusterIP)
 - [ ] Helm chart with `values.yaml`, `values-dev.yaml`, `values-prod.yaml`
-- [ ] App running in Minikube via Helm
+- [ ] App running in kind via Helm
 - [ ] `helm upgrade --install` working with `--wait`
 
 ---
@@ -1707,8 +1751,8 @@ By the end of this part, you should have:
 
 These are the issues that trip up most people on their first Kubernetes deployment:
 
-**1. Docker context stuck on Minikube**
-After running `eval $(minikube docker-env)`, your Docker CLI points at Minikube's daemon. When you're done, run `eval $(minikube docker-env --unset)` or restart your terminal. Otherwise, `docker run` commands will fail because Minikube's daemon isn't reachable outside the VM.
+**1. Forgetting to reload the image after a rebuild**
+`kind load docker-image` copies the image into the cluster once, at the moment you run it. If you rebuild the image after a code change but don't re-run `kind load docker-image`, Kubernetes keeps using the stale image already loaded into the nodes — from `kubectl`'s perspective the tag hasn't changed, so nothing tells it to pull anything new. Fix: always re-run `kind load docker-image` after every rebuild, before restarting pods.
 
 **2. Service selector doesn't match pod labels**
 The Service uses `selector.matchLabels` to find pods. If your Deployment's pod labels don't match exactly, the Service shows `<none>` for endpoints. Fix: `kubectl get pods --show-labels` and compare to your Service's selector.

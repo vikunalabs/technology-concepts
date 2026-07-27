@@ -1628,13 +1628,13 @@ Without observability: hours of guessing.
 ## Practice Exercises
 
 **Exercise 1 — Prometheus end-to-end:**
-Install `kube-prometheus-stack` in Minikube. Add the `micrometer-registry-prometheus` dependency to your `hello-app`. Expose `/actuator/prometheus`. Create a `ServiceMonitor`. Verify the target appears in Prometheus at `localhost:9090/targets`. Write a PromQL query that shows the request rate for your `/api/hello` endpoint. Watch it change as you run `curl` in a loop.
+Install `kube-prometheus-stack` in your kind cluster. Add the `micrometer-registry-prometheus` dependency to your `hello-app`. Expose `/actuator/prometheus`. Create a `ServiceMonitor`. Verify the target appears in Prometheus at `localhost:9090/targets`. Write a PromQL query that shows the request rate for your `/api/hello` endpoint. Watch it change as you run `curl` in a loop.
 
 **Exercise 2 — Custom metrics and alerting:**
 Add a `Counter` metric to your Spring Boot app that counts requests to each endpoint, tagged with `endpoint` and `status` labels. Write a `PrometheusRule` that fires a `HighErrorRate` alert when the error percentage exceeds 5% for 2 minutes. Deliberately trigger the alert by temporarily making your endpoint return 500 errors. Watch the alert appear in Prometheus, then in Alertmanager, and verify a Slack notification is sent (or use a webhook.site URL for testing).
 
 **Exercise 3 — Structured logging with Loki:**
-Configure Spring Boot JSON logging with the Logstash Logback encoder. Deploy to Minikube with Loki installed. Open Grafana Explore with the Loki data source. Write a LogQL query that returns only ERROR-level logs from your namespace. Add a `orderId` field to some log lines and filter by it. Verify the JSON field appears as a Loki label after parsing.
+Configure Spring Boot JSON logging with the Logstash Logback encoder. Deploy to your kind cluster with Loki installed. Open Grafana Explore with the Loki data source. Write a LogQL query that returns only ERROR-level logs from your namespace. Add a `orderId` field to some log lines and filter by it. Verify the JSON field appears as a Loki label after parsing.
 
 **Exercise 4 — Distributed tracing:**
 Deploy two Spring Boot services: `service-a` (receives HTTP requests and calls `service-b`) and `service-b` (does some work and returns). Install Tempo. Add the OpenTelemetry tracing dependency to both services. Call `service-a` from your browser, then find the trace in Grafana. Verify the trace spans both services and shows the parent-child relationship. Add `@WithSpan` to a method in `service-b` and verify the new span appears in the trace.
