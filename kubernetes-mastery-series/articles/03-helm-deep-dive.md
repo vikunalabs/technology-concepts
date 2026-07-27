@@ -1856,7 +1856,7 @@ Take the deployment template from Part 1 or 2 and extract the following into nam
 Verify with `helm template` that the rendered output is identical before and after extraction.
 
 **Exercise 3 — Subchart integration:**
-Add the Bitnami PostgreSQL subchart to your `hello-app-chart`. Configure it with a 1Gi persistent volume and an existing Secret for the password. Add a `externalDatabase` fallback configuration. Deploy to Minikube with `postgresql.enabled=true` and verify both the app pod and postgres pod are running. Then deploy again with `postgresql.enabled=false` and `externalDatabase.host=localhost` — verify the app deploys without the postgres pod (it will fail to connect, but it should deploy).
+Add the Bitnami PostgreSQL subchart to your `hello-app-chart`. Configure it with a 1Gi persistent volume and an existing Secret for the password. Add a `externalDatabase` fallback configuration. Deploy to your kind cluster with `postgresql.enabled=true` and verify both the app pod and postgres pod are running. Then deploy again with `postgresql.enabled=false` and `externalDatabase.host=localhost` — verify the app deploys without the postgres pod (it will fail to connect, but it should deploy).
 
 **Exercise 4 — Migration hook:**
 Write a `pre-upgrade` hook for your chart that runs a Job printing `"Running database migration for version {{ .Chart.AppVersion }}"` to stdout. Run `helm upgrade` and verify: (1) the Job runs and completes before pods are updated, (2) the Job is deleted after success, (3) `helm history` shows a new revision. Then break the Job intentionally (set `command: ["exit", "1"]`) and observe what `--atomic` does.

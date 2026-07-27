@@ -289,21 +289,25 @@ parameters:
   cachingmode: ReadOnly   # ReadOnly improves read performance for databases
 ```
 
-### Minikube — Local Path Provisioner
+### kind — Local Path Provisioner
+
+Unlike most of the addons we've had to install by hand for kind (Ingress, metrics-server), a default StorageClass is one thing kind gives you for free, no setup required — it ships [Rancher's `local-path-provisioner`](https://github.com/rancher/local-path-provisioner) pre-installed and pre-configured as the cluster default. You'd see this if you ran `kubectl get storageclass` right now:
 
 ```yaml
-# Minikube provides this automatically as the default StorageClass
-# Created by: minikube addons enable default-storageclass
+# Already present in every kind cluster — nothing to install.
+# Shown here so you can see what it's actually doing.
 apiVersion: storage.k8s.io/v1
 kind: StorageClass
 metadata:
   name: standard
   annotations:
     storageclass.kubernetes.io/is-default-class: "true"
-provisioner: k8s.io/minikube-hostpath
-volumeBindingMode: Immediate
+provisioner: rancher.io/local-path
+volumeBindingMode: WaitForFirstConsumer
 reclaimPolicy: Delete
 ```
+
+Like the other local-path provisioners you've seen in this chapter, `rancher.io/local-path` backs each PV with a directory on the node's filesystem — inside the kind node's container, under `/var/local-path-provisioner`. That's fine for local development and exactly why no setup is needed, but the same production caveat applies: this is single-node, node-local storage. A pod that gets rescheduled to a different node loses access to its volume. Don't reach for this pattern outside local dev and CI.
 
 ### What Happens Without a StorageClass
 
@@ -1539,7 +1543,7 @@ spec:
 ## Practice Exercises
 
 **Exercise 1 — PVC lifecycle:**
-Create a PVC manually in Minikube. Mount it in a pod and write a file to it. Delete the pod. Create a new pod mounting the same PVC. Verify the file still exists — demonstrating that data persists beyond pod lifecycle. Then scale a StatefulSet from 1 to 3 replicas and back to 1. Verify that PVCs for the removed pods are retained (`kubectl get pvc`), not deleted.
+Create a PVC manually in your kind cluster. Mount it in a pod and write a file to it. Delete the pod. Create a new pod mounting the same PVC. Verify the file still exists — demonstrating that data persists beyond pod lifecycle. Then scale a StatefulSet from 1 to 3 replicas and back to 1. Verify that PVCs for the removed pods are retained (`kubectl get pvc`), not deleted.
 
 **Exercise 2 — StatefulSet deployment and stability:**
 Deploy the PostgreSQL StatefulSet from Chapter 4. Create a test database and insert 100 rows. Delete the `postgres-0` pod manually (`kubectl delete pod postgres-0 -n production`). Watch it be recreated with the same name (`kubectl get pods -w`). Verify the 100 rows still exist after the pod comes back — confirming that the PVC was reattached. Then check the DNS name resolves correctly: `kubectl exec -it <any-pod> -- nslookup postgres-0.postgres-headless.production`.
