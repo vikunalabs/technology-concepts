@@ -545,7 +545,7 @@ jobs:
     - uses: actions/checkout@v4
     - uses: actions/setup-java@v4
       with:
-        java-version: '17'
+        java-version: '26'
         distribution: 'temurin'
         cache: maven
     - name: Run tests
@@ -556,6 +556,20 @@ jobs:
       with:
         name: test-results
         path: target/surefire-reports/
+    # Gradle equivalent of this job's Java steps above:
+    #   - uses: actions/setup-java@v4
+    #     with:
+    #       java-version: '26'
+    #       distribution: 'temurin'
+    #       cache: gradle
+    #   - name: Run tests
+    #     run: ./gradlew verify
+    #   - name: Upload test results
+    #     if: always()
+    #     uses: actions/upload-artifact@v4
+    #     with:
+    #       name: test-results
+    #       path: build/reports/tests/
 
   # ──────────────────────────────────────────────────────────────────────────
   # Job 3: Security Scan
