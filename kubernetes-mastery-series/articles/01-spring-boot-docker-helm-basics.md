@@ -4,7 +4,7 @@
 
 > **Level:** Complete Beginner — no prior Kubernetes or Docker experience needed
 
-> **Prerequisites:** Java 17+, Maven, a terminal
+> **Prerequisites:** Java 26+, Maven or Gradle, a terminal
 
 > **Time to complete:** 3–4 hours
 
@@ -98,21 +98,38 @@ A REST API with three endpoints plus Spring Boot Actuator health endpoints. The 
 
 ### Step 1: Create the Project
 
+> **Maven or Gradle?** This series shows both build tools side by side. Every Maven command has a Gradle equivalent, and every `pom.xml` snippet has a matching `build.gradle` (Gradle Groovy DSL) snippet. Pick whichever your team standardizes on — the Docker, Kubernetes, and Helm content later in this article behaves identically either way. If you're not sure, Maven remains the more common default for Spring Boot tutorials, but Gradle's incremental build and dependency caching make it worth knowing.
+
 **Option A — Spring Initializr website (visual):**
 1. Go to [https://start.spring.io](https://start.spring.io)
-2. Fill in: Project = Maven, Language = Java, Spring Boot = 3.2.x
-3. Group = `com.example`, Artifact = `hello-app`, Java = 17
+2. Fill in: Project = **Maven** or **Gradle - Groovy**, Language = Java, Spring Boot = 3.3.x
+3. Group = `com.example`, Artifact = `hello-app`, Java = **26**
 4. Click **Add Dependencies** → add **Spring Web** and **Spring Boot Actuator**
 5. Click **Generate** → download the ZIP → extract it
 
-**Option B — curl (faster, no browser needed):**
+**Option B — curl, Maven project (faster, no browser needed):**
 ```bash
 curl https://start.spring.io/starter.zip \
   -d dependencies=web,actuator \
   -d name=hello-app \
   -d groupId=com.example \
   -d artifactId=hello-app \
-  -d javaVersion=17 \
+  -d javaVersion=26 \
+  -o hello-app.zip
+
+unzip hello-app.zip -d hello-app
+cd hello-app
+```
+
+**Option C — curl, Gradle project (Groovy DSL):**
+```bash
+curl https://start.spring.io/starter.zip \
+  -d type=gradle-project \
+  -d dependencies=web,actuator \
+  -d name=hello-app \
+  -d groupId=com.example \
+  -d artifactId=hello-app \
+  -d javaVersion=26 \
   -o hello-app.zip
 
 unzip hello-app.zip -d hello-app
@@ -120,8 +137,14 @@ cd hello-app
 ```
 
 Verify it runs before touching anything else:
+
 ```bash
+# Maven
 ./mvnw spring-boot:run
+
+# Gradle
+./gradlew bootRun
+
 # Should see: Started HelloAppApplication in X.XXX seconds
 ```
 
@@ -132,6 +155,42 @@ curl http://localhost:8080/actuator/health
 ```
 
 Stop the app with `Ctrl+C`. We'll now add our own code.
+
+Whichever tool you picked, the build file needs Java 26 as both the source and target compatibility, and the Actuator + Web dependencies. If you used Option B or C above, this is already generated for you — but here's what to check (or write by hand if starting from an existing project):
+
+```xml
+<!-- pom.xml — relevant excerpt -->
+<properties>
+    <java.version>26</java.version>
+</properties>
+
+<dependencies>
+    <dependency>
+        <groupId>org.springframework.boot</groupId>
+        <artifactId>spring-boot-starter-web</artifactId>
+    </dependency>
+    <dependency>
+        <groupId>org.springframework.boot</groupId>
+        <artifactId>spring-boot-starter-actuator</artifactId>
+    </dependency>
+</dependencies>
+```
+
+```groovy
+// build.gradle — relevant excerpt
+java {
+    toolchain {
+        languageVersion = JavaLanguageVersion.of(26)
+    }
+}
+
+dependencies {
+    implementation 'org.springframework.boot:spring-boot-starter-web'
+    implementation 'org.springframework.boot:spring-boot-starter-actuator'
+}
+```
+
+> **Why `toolchain` instead of `sourceCompatibility`:** Gradle's Java toolchain support automatically provisions the right JDK version even if it's not the one on your PATH — useful in CI where the runner may default to an older LTS. `sourceCompatibility = JavaVersion.VERSION_26` still works, but it assumes JDK 26 is already installed and on `JAVA_HOME`.
 
 ### Step 2: Create the REST Controller
 
@@ -255,7 +314,11 @@ logging:
 This is a habit worth building: always verify the app works as plain Java before introducing Docker or Kubernetes. Problems caught here take 10 seconds to fix. The same problems caught inside a container take 10 minutes.
 
 ```bash
+# Maven
 ./mvnw spring-boot:run
+
+# Gradle
+./gradlew bootRun
 ```
 
 In a second terminal:
@@ -307,6 +370,91 @@ Docker flips this model. Instead of configuring the server to run your app, you 
 | **Container** | The heated meal on your plate | A running instance of an image |
 | **Registry** | A grocery store's freezer section | A server that stores and serves images |
 
+### Dockerfile vs. a Build-Tool Plugin (Jib) — Which Should You Use?
+
+Before writing a Dockerfile, it's worth knowing there's a second, Java-specific way to produce a container image: build-tool plugins like [Jib](https://github.com/GoogleContainerTools/jib) (or Spring Boot's own `bootBuildImage`, which uses [Cloud Native Buildpacks](https://buildpacks.io/) under the hood). Both approaches produce a valid OCI image; they differ in control and mechanism.
+
+| | Dockerfile | Jib / `bootBuildImage` |
+|---|---|---|
+| **Requires a running Docker daemon?** | Yes, to build | No — Jib builds and pushes straight to a registry using the Java process itself |
+| **OS-level customization** (installing packages, running shell scripts, multi-stage native builds) | Full control | None — you're limited to what the plugin exposes |
+| **Layering** | Manual — you decide what goes in each `COPY`/`RUN` layer | Automatic — Jib splits dependencies, resources, and classes into separate layers for you, tuned for Java apps |
+| **Maintenance** | You own and update the Dockerfile | No Dockerfile to maintain; image config lives in `pom.xml`/`build.gradle.kts` |
+| **Best for** | Non-JVM processes alongside your app, custom base images, teams that already own Docker tooling | Pure Spring Boot/Java services with no OS-level customization needs |
+
+**This series uses a Dockerfile** for the rest of Part 1, deliberately — the goal here is to *teach* what happens inside a container image (layers, base images, non-root users, the JVM's container-awareness flags), and a Dockerfile makes every one of those steps explicit and inspectable. Jib hides all of that behind plugin configuration, which is exactly what you want once you understand it, but not while you're still learning it.
+
+If your project has no OS-level customization needs, Jib is a reasonable production choice — it's faster (no Docker build context, no local daemon required in CI) and its layering is already optimized for JVM apps. Here's the equivalent of what this chapter's Dockerfile produces, expressed as Jib config:
+
+```xml
+<!-- pom.xml — Jib via Maven -->
+<plugin>
+    <groupId>com.google.cloud.tools</groupId>
+    <artifactId>jib-maven-plugin</artifactId>
+    <version>3.4.3</version>
+    <configuration>
+        <from>
+            <image>eclipse-temurin:26-jre-alpine</image>
+        </from>
+        <to>
+            <image>yourusername/hello-app</image>
+            <tags><tag>${project.version}</tag></tags>
+        </to>
+        <container>
+            <ports><port>8080</port></ports>
+            <user>1000:1000</user>
+            <jvmFlags>
+                <jvmFlag>-XX:+UseContainerSupport</jvmFlag>
+                <jvmFlag>-XX:MaxRAMPercentage=75.0</jvmFlag>
+            </jvmFlags>
+        </container>
+    </configuration>
+</plugin>
+```
+
+```bash
+# Build straight to your local Docker daemon (for testing, like `docker build`)
+./mvnw compile jib:dockerBuild
+
+# Build and push directly to a registry — no local Docker daemon needed at all
+./mvnw compile jib:build
+```
+
+```groovy
+// build.gradle — Jib via Gradle
+plugins {
+    id 'com.google.cloud.tools.jib' version '3.4.3'
+}
+
+jib {
+    from {
+        image = 'eclipse-temurin:26-jre-alpine'
+    }
+    to {
+        image = 'yourusername/hello-app'
+        tags = [project.version.toString()]
+    }
+    container {
+        ports = ['8080']
+        user = '1000:1000'
+        jvmFlags = [
+            '-XX:+UseContainerSupport',
+            '-XX:MaxRAMPercentage=75.0'
+        ]
+    }
+}
+```
+
+```bash
+# Build straight to your local Docker daemon
+./gradlew jibDockerBuild
+
+# Build and push directly to a registry — no local Docker daemon needed at all
+./gradlew jib
+```
+
+Note what's missing compared to the Dockerfile: no `addgroup`/`adduser` (Jib runs as a configurable non-root `user` by default, no shell commands needed), no `HEALTHCHECK` (Jib doesn't support it — use Kubernetes probes instead, which you need anyway), and no multi-stage build (Jib never touches a build-tool image at runtime; it assembles layers directly from your compiled output). That's the appeal — and the limitation. If you later need to `apt-get install` a native library or run a custom entrypoint script, you're back to a Dockerfile.
+
 ### Multi-Stage Builds — Why Size Matters
 
 A naive Dockerfile copies your source code in and runs `mvn package`. The resulting image contains Maven, the entire JDK, all downloaded dependencies in `~/.m2`, your source files, and your compiled JAR. That's roughly 1GB for a simple Spring Boot app.
@@ -342,9 +490,31 @@ RUN mvn clean package       # Recompiles code, but NOT re-downloading dependenci
 
 The rule: **copy files that change rarely before files that change often.** Your `pom.xml` changes when you add a dependency (uncommon). Your `src/` changes every time you write code (frequent). Separating them into two `COPY` instructions means Maven only re-downloads dependencies when `pom.xml` actually changes.
 
+The same rule applies to Gradle, but the files to copy first differ slightly — Gradle's dependency graph is defined across `build.gradle`, `settings.gradle`, and the wrapper files:
+
+```dockerfile
+# SLOW — rebuilds dependencies on every code change
+COPY . .                       # Changes whenever ANY file changes
+RUN ./gradlew dependencies     # Re-resolves all dependencies every time
+RUN ./gradlew build            # Recompiles every time
+```
+
+```dockerfile
+# FAST — dependencies cached as long as the build files don't change
+COPY build.gradle settings.gradle gradlew ./
+COPY gradle ./gradle
+RUN ./gradlew dependencies --no-daemon   # Cached — runs once, then skipped
+COPY src ./src                            # Changes when code changes
+RUN ./gradlew build -x test --no-daemon   # Recompiles code, but NOT re-resolving dependencies
+```
+
+`--no-daemon` matters here specifically because it's a one-off build inside a throwaway container — the Gradle daemon exists to speed up *repeated* local builds and has nothing to gain (and memory to lose) inside a single Docker build stage.
+
 ### The Dockerfile
 
-Create a file named `Dockerfile` in the root of your project (same level as `pom.xml`):
+Create a file named `Dockerfile` in the root of your project (same level as `pom.xml` or `build.gradle`). Use whichever of the two versions below matches your build tool — the runtime stage (Stage 2) is identical either way, since by that point both tools have produced the same artifact: a runnable JAR.
+
+**Maven version:**
 
 ```dockerfile
 # =============================================================================
@@ -352,7 +522,7 @@ Create a file named `Dockerfile` in the root of your project (same level as `pom
 # Use the full JDK + Maven image to compile the application.
 # This image is large (~700MB) but is NEVER shipped — it's only used to build.
 # =============================================================================
-FROM maven:3.9-eclipse-temurin-17 AS build
+FROM maven:3.9-eclipse-temurin-26 AS build
 
 WORKDIR /app
 
@@ -374,7 +544,7 @@ RUN mvn clean package -DskipTests -q
 # Use a minimal JRE-only image — no build tools, no source code, no Maven.
 # This is the image that actually gets deployed.
 # =============================================================================
-FROM eclipse-temurin:17-jre-alpine
+FROM eclipse-temurin:26-jre-alpine
 
 # WHY create a dedicated user: running as root inside a container is a security
 # risk. If an attacker exploits a vulnerability in your app and escapes the
@@ -430,6 +600,68 @@ ENTRYPOINT ["java", \
   "/app/app.jar"]
 ```
 
+**Gradle version:**
+
+Only Stage 1 changes — Gradle's build output lands in `build/libs/*.jar` instead of Maven's `target/*.jar`, and the wrapper/build files are copied instead of `pom.xml`. Stage 2 (runtime) is copy-identical to the Maven version above, with one line adjusted for the JAR's new location.
+
+```dockerfile
+# =============================================================================
+# Stage 1: Build
+# Use the full JDK + Gradle image to compile the application.
+# This image is large but is NEVER shipped — it's only used to build.
+# =============================================================================
+FROM gradle:8.10-jdk26-alpine AS build
+
+WORKDIR /app
+
+# Copy build files FIRST and resolve dependencies.
+# WHY: Docker caches this layer. As long as build.gradle/settings.gradle don't
+# change, subsequent builds skip dependency resolution entirely — saving minutes.
+COPY build.gradle settings.gradle gradlew ./
+COPY gradle ./gradle
+RUN ./gradlew dependencies --no-daemon -q
+
+# Now copy source code and build.
+# WHY we copy source AFTER dependencies: if we did COPY . . first,
+# every code change would invalidate the dependency cache layer above it,
+# forcing a full re-resolve every single build.
+COPY src ./src
+RUN ./gradlew build -x test --no-daemon -q
+
+# =============================================================================
+# Stage 2: Runtime
+# Use a minimal JRE-only image — no build tools, no source code, no Gradle.
+# This is the image that actually gets deployed.
+# =============================================================================
+FROM eclipse-temurin:26-jre-alpine
+
+RUN addgroup -S appgroup && adduser -S appuser -G appgroup
+
+WORKDIR /app
+
+# Copy only the compiled JAR from the build stage.
+# NOTE the different path — Gradle outputs to build/libs, Maven to target.
+COPY --from=build /app/build/libs/*.jar app.jar
+
+RUN chown -R appuser:appgroup /app
+USER appuser
+
+EXPOSE 8080
+
+HEALTHCHECK --interval=30s --timeout=3s --start-period=15s --retries=3 \
+  CMD wget --quiet --tries=1 --spider http://localhost:8080/actuator/health || exit 1
+
+# Same JVM container-awareness flags as the Maven version — see the annotated
+# ENTRYPOINT above for why each flag matters.
+ENTRYPOINT ["java", \
+  "-XX:+UseContainerSupport", \
+  "-XX:MaxRAMPercentage=75.0", \
+  "-jar", \
+  "/app/app.jar"]
+```
+
+> **Watch out for a Gradle-specific trap:** if your project applies the `bootJar` and plain `jar` tasks both, `build/libs/` can contain two JARs — a plain one and a Spring Boot "fat" one (usually suffixed `-plain.jar` for the plain variant). `COPY --from=build /app/build/libs/*.jar app.jar` will fail or grab the wrong one if both are present. Either disable the plain JAR (`tasks.named('jar') { enabled = false }` in `build.gradle`) or copy the specific bootJar output path instead of a glob.
+
 ### .dockerignore — Keeping the Build Context Clean
 
 Docker sends your entire project directory to the Docker daemon when building. Without a `.dockerignore`, it sends `target/` (compiled classes, test reports, the old JAR), `.git/` (full git history), IDE files, and everything else. This slows down the build and — more importantly — can bust your layer cache when unrelated files change.
@@ -464,7 +696,11 @@ docs/
 
 First, compile the JAR:
 ```bash
+# Maven
 ./mvnw clean package -DskipTests
+
+# Gradle
+./gradlew clean build -x test
 ```
 
 Build the Docker image:
@@ -1402,6 +1638,7 @@ Here's the full sequence from code to running cluster:
 ```bash
 # 1. Build the JAR
 ./mvnw clean package -DskipTests
+# Gradle equivalent: ./gradlew clean build -x test
 
 # 2. Build the Docker image inside Minikube
 eval $(minikube docker-env)
@@ -1456,7 +1693,7 @@ curl http://localhost:8080/actuator/health/readiness
 By the end of this part, you should have:
 
 - [ ] Spring Boot app with Actuator liveness + readiness endpoints
-- [ ] Multi-stage Dockerfile with non-root user, correct JVM flags
+- [ ] Multi-stage Dockerfile (Maven or Gradle) with non-root user, correct JVM flags — or a Jib configuration if you chose that path
 - [ ] `.dockerignore` to keep build context lean
 - [ ] Kubernetes Deployment with all three probe types configured
 - [ ] Kubernetes Service (ClusterIP)

@@ -22,7 +22,7 @@ This part automates the entire path from `git push` to running in production. By
 
 Today's workflow:
 ```
-Write code → mvn package → docker build → docker push → helm upgrade
+Write code → mvn package (or gradle build) → docker build → docker push → helm upgrade
 ↑ manual      ↑ manual       ↑ manual        ↑ manual      ↑ manual
 ```
 
@@ -280,10 +280,10 @@ jobs:
     - name: Checkout code
       uses: actions/checkout@v4
 
-    - name: Set up JDK 17
+    - name: Set up JDK 26
       uses: actions/setup-java@v4
       with:
-        java-version: '17'
+        java-version: '26'
         distribution: 'temurin'
         cache: maven            # Cache ~/.m2/repository between runs — saves ~2 minutes
 
@@ -403,6 +403,33 @@ jobs:
       with:
         sarif_file: trivy-results.sarif   # Appears in GitHub Security tab
 ```
+
+**Gradle equivalent for the `test` job:** the rest of this pipeline (Docker build, Trivy scan, push, deploy) is identical regardless of build tool — it operates on the image, not the source. Only the `test` job's steps change:
+
+```yaml
+    - name: Set up JDK 26
+      uses: actions/setup-java@v4
+      with:
+        java-version: '26'
+        distribution: 'temurin'
+        cache: gradle            # Cache ~/.gradle/caches and ~/.gradle/wrapper between runs
+
+    - name: Run unit tests
+      run: ./gradlew test
+
+    - name: Run integration tests
+      run: ./gradlew integrationTest
+
+    - name: Upload test results
+      uses: actions/upload-artifact@v4
+      if: always()
+      with:
+        name: test-results
+        path: build/reports/tests/       # Gradle's report path, vs Maven's target/surefire-reports/
+        retention-days: 30
+```
+
+The `cache: gradle` shorthand in `setup-java` caches the same things `cache: maven` does for Maven — dependency downloads — just from Gradle's cache directories instead of `~/.m2`. `integrationTest` above assumes a separate source set/task configured for integration tests (a common pattern, e.g. via the `java-test-fixtures` plugin or a custom `sourceSets` block); if your project runs everything through `test`, drop that step.
 
 ### The Deploy Workflow — Dev, Staging, Production
 
@@ -1003,7 +1030,7 @@ variables:
 # ─────────────────────────────────────────────────────────
 test:
   stage: test
-  image: maven:3.9-eclipse-temurin-17
+  image: maven:3.9-eclipse-temurin-26
   script:
     - mvn test verify
   cache:
@@ -1015,6 +1042,25 @@ test:
     paths:
       - target/surefire-reports/
     expire_in: 30 days
+
+# Gradle equivalent of the test stage above — swap this in if your project
+# uses Gradle instead of Maven. Everything downstream (build, scan, deploy)
+# is unchanged, since it operates on the built image, not the source.
+# test:
+#   stage: test
+#   image: gradle:8.10-jdk26-alpine
+#   script:
+#     - gradle test integrationTest --no-daemon
+#   cache:
+#     key: "${CI_PROJECT_ID}-gradle"
+#     paths:
+#       - .gradle/caches/
+#       - .gradle/wrapper/
+#   artifacts:
+#     when: always
+#     paths:
+#       - build/reports/tests/
+#     expire_in: 30 days
 
 # ─────────────────────────────────────────────────────────
 # Stage: build
@@ -1494,7 +1540,7 @@ Total time from merge to production: approximately 45–60 minutes, zero manual 
 ## Practice Exercises
 
 **Exercise 1 — End-to-end pipeline from scratch:**
-Set up the GitHub Actions CI workflow from Chapter 3 (`ci.yml`) for your `hello-app` repository. Make a code change, push it, and watch the workflow run. Verify: (1) tests run, (2) image is built and pushed to Docker Hub, (3) Trivy scan runs. Read the Trivy output — what vulnerabilities, if any, does it find in the `eclipse-temurin:17-jre-alpine` base image?
+Set up the GitHub Actions CI workflow from Chapter 3 (`ci.yml`) for your `hello-app` repository. Make a code change, push it, and watch the workflow run. Verify: (1) tests run, (2) image is built and pushed to Docker Hub, (3) Trivy scan runs. Read the Trivy output — what vulnerabilities, if any, does it find in the `eclipse-temurin:26-jre-alpine` base image?
 
 **Exercise 2 — Manual approval gate:**
 Set up the deploy workflow (`deploy.yml`) with GitHub Environments. Configure `staging` and `production` environments. Add yourself as a required reviewer for `production`. Push a change, let it auto-deploy to dev and staging, then observe the pipeline pause at production. Approve it, and watch the final deployment. Check `helm history` in the production namespace after it completes.

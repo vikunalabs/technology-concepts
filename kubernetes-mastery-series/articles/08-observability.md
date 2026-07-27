@@ -149,6 +149,12 @@ Add the dependency to `pom.xml`:
 </dependency>
 ```
 
+Or to `build.gradle`:
+
+```groovy
+implementation 'io.micrometer:micrometer-registry-prometheus'
+```
+
 Configure in `application.yml`:
 
 ```yaml
@@ -996,6 +1002,11 @@ Add the dependency:
 </dependency>
 ```
 
+```groovy
+// build.gradle
+implementation 'net.logstash.logback:logstash-logback-encoder:7.4'
+```
+
 Configure Logback to output JSON:
 ```xml
 <!-- src/main/resources/logback-spring.xml -->
@@ -1140,6 +1151,12 @@ OpenTelemetry auto-instrumentation means you add a dependency and configure an e
     <groupId>io.opentelemetry</groupId>
     <artifactId>opentelemetry-exporter-otlp</artifactId>
 </dependency>
+```
+
+```groovy
+// build.gradle
+implementation 'io.micrometer:micrometer-tracing-bridge-otel'
+implementation 'io.opentelemetry:opentelemetry-exporter-otlp'
 ```
 
 ```yaml

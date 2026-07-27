@@ -383,7 +383,7 @@ Picture this scenario: your app connects to a PostgreSQL database. The database 
 Your database hostname changes. To update it, you must:
 
 1. Change the URL in `application.yml`
-2. Run `mvn clean package` to recompile
+2. Run `mvn clean package` to recompile (or `./gradlew build` on Gradle)
 3. Run `docker build` to rebuild the image
 4. Run `docker push` to upload the new image
 5. Run `kubectl rollout restart` to deploy the new image
@@ -560,6 +560,11 @@ Add the dependency:
     <groupId>org.springframework.cloud</groupId>
     <artifactId>spring-cloud-starter-kubernetes-client-config</artifactId>
 </dependency>
+```
+
+```groovy
+// build.gradle
+implementation 'org.springframework.cloud:spring-cloud-starter-kubernetes-client-config'
 ```
 
 Enable reload in `application.yml`:
