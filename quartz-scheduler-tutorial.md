@@ -1,9 +1,5 @@
 # Quartz Scheduler — From Basics to Advanced
 
-A ground-up tutorial on the Quartz Job Scheduling library, with a strong focus on how it integrates with Spring Boot — using patterns drawn from a real clustered, JDBC-backed report-scheduling system along the way.
-
----
-
 ## Part 1 — Foundations
 
 ### 1.1 What Quartz actually is
@@ -24,7 +20,7 @@ At its core, Quartz answers one question: **"run this piece of code, at this tim
 The critical relationship: **a `JobDetail` is not a `Job` instance.** It's a *description* of one. Quartz creates a fresh `Job` instance every time a trigger fires (more on this in Part 3 — it's the source of a very common integration bug). Multiple `Trigger`s can point at the same `JobDetail`, each firing it on a different schedule.
 
 ```java
-public class HelloJob implements Job {
+public class HelloWorldJob implements Job {
     @Override
     public void execute(JobExecutionContext context) throws JobExecutionException {
         System.out.println("Hello, Quartz!");
@@ -39,7 +35,7 @@ That's the entire contract: implement `execute()`. Quartz calls it; you do work;
 Every `JobDetail` and every `Trigger` has an identity made of a **name** and a **group** — two strings, together forming a `JobKey` or `TriggerKey`. Groups exist so you can namespace and bulk-operate on related jobs ("pause the entire `reporting` group") without every job needing a globally unique name.
 
 ```java
-JobDetail job = JobBuilder.newJob(HelloJob.class)
+JobDetail job = JobBuilder.newJob(HelloWorldJob.class)
         .withIdentity("myJob", "myGroup")
         .build();
 ```
@@ -49,25 +45,118 @@ If you don't specify a group, Quartz uses `"DEFAULT"`. In any system with more t
 ### 1.4 Building and scheduling, end to end
 
 ```java
-Scheduler scheduler = new StdSchedulerFactory().getScheduler();
-scheduler.start();
-
-JobDetail job = JobBuilder.newJob(HelloJob.class)
-        .withIdentity("myJob", "myGroup")
-        .build();
-
-Trigger trigger = TriggerBuilder.newTrigger()
-        .withIdentity("myTrigger", "myGroup")
-        .startNow()
-        .withSchedule(SimpleScheduleBuilder.simpleSchedule()
-                .withIntervalInSeconds(10)
-                .repeatForever())
-        .build();
-
-scheduler.scheduleJob(job, trigger);
+public class QuartzBasicsApplication {
+    public static void main(String[] args) throws SchedulerException {
+        // 1. Get a scheduler
+        Scheduler scheduler = new StdSchedulerFactory().getScheduler();
+        scheduler.start();
+        
+        // 2. Build a JobDetail
+        JobDetail job = JobBuilder.newJob(HelloWorldJob.class)
+                .withIdentity("helloWorldJob", "helloWorldGroup")
+                .build();
+        
+        // 3. Build a Trigger
+        Trigger trigger = TriggerBuilder.newTrigger()
+                .withIdentity("helloWorldTrigger", "helloWorldGroup")
+                .startNow()
+                .withSchedule(SimpleScheduleBuilder.simpleSchedule()
+                        .withIntervalInSeconds(10)
+                        .repeatForever())
+                .build();
+        
+        // 4. Schedule the job
+        scheduler.scheduleJob(job, trigger);
+        
+        // 5. Keep the application running
+        Thread.currentThread().join();
+    }
+}
 ```
 
 Five steps, always in this order: get a scheduler → build a `JobDetail` → build a `Trigger` → schedule them together → start the scheduler (or start it first — order between building and starting doesn't matter, but nothing fires until `start()` is called).
+
+### 1.5 Job Data: Passing parameters to your job
+
+Real-world jobs need data: a report ID, an email address, a file path. Quartz provides `JobDataMap` — a `Map<String, Object>`-like structure attached to both `JobDetail` and `Trigger`.
+
+**Setting job data:**
+```java
+JobDetail job = JobBuilder.newJob(HelloWorldJob.class)
+        .withIdentity("helloWorldJob", "helloWorldGroup")
+        .usingJobData("message", "Hello World from Quartz!")
+        .usingJobData("timestamp", String.valueOf(System.currentTimeMillis()))
+        .build();
+```
+
+**Retrieving job data in your `execute()` method:**
+```java
+public class HelloWorldJob implements Job {
+    private static final Logger log = LoggerFactory.getLogger(HelloWorldJob.class);
+    
+    @Override
+    public void execute(JobExecutionContext context) throws JobExecutionException {
+        try {
+            // Access merged job data (JobDetail + Trigger data)
+            JobDataMap dataMap = context.getMergedJobDataMap();
+            String message = dataMap.getString("message");
+            String timestamp = dataMap.getString("timestamp");
+            
+            log.info("Executing job: {}", message);
+            log.info("Job scheduled at: {}", timestamp);
+            
+            // Your business logic
+            System.out.println("Printing: " + message);
+            
+        } catch (Exception e) {
+            log.error("Error executing job", e);
+            throw new JobExecutionException("Job execution failed", e);
+        }
+    }
+}
+```
+
+**Important:** `getMergedJobDataMap()` combines data from both the `JobDetail` and the `Trigger`. If the same key exists in both, the trigger's value takes precedence. Alternatively, you can access them separately:
+- `context.getJobDetail().getJobDataMap()` — job-level data only
+- `context.getTrigger().getJobDataMap()` — trigger-level data only
+
+**Type safety:** Use the appropriate getter for your data type — `getString()`, `getLong()`, `getInt()`, `getBoolean()`, etc. Using the wrong getter will throw a `ClassCastException`.
+
+### 1.6 Graceful Shutdown: Why it matters and how to do it
+
+If your application exits while a job is executing, that job may be interrupted mid-flight. Worse, if you're using a persistent job store (Part 5), you may leave the scheduler in an inconsistent state.
+
+**The solution: a JVM shutdown hook:**
+```java
+public class QuartzBasicsApplication {
+    public static void main(String[] args) throws SchedulerException {
+        Scheduler scheduler = new StdSchedulerFactory().getScheduler();
+        scheduler.start();
+        
+        // Schedule your job...
+        
+        // Register shutdown hook
+        Runtime.getRuntime().addShutdownHook(new Thread(() -> {
+            try {
+                log.info("Shutting down scheduler...");
+                scheduler.shutdown(true);  // true = wait for running jobs to finish
+                log.info("Scheduler shutdown complete");
+            } catch (SchedulerException e) {
+                log.error("Error shutting down scheduler", e);
+            }
+        }));
+        
+        // Keep the main thread alive
+        Thread.currentThread().join();
+    }
+}
+```
+
+The `shutdown(true)` parameter is critical:
+- `true` — wait for currently executing jobs to complete before shutting down
+- `false` — interrupt all executing jobs immediately
+
+Choose based on your job's idempotency: if a job can safely be interrupted mid-execution, `false` is acceptable. Otherwise, `true` prevents partial work.
 
 ---
 
@@ -107,6 +196,14 @@ Every trigger type has a **misfire instruction** governing what happens next. Fo
 - `withMisfireHandlingInstructionFireAndProceed()` — fire once immediately to "catch up," then resume the normal schedule.
 - `withMisfireHandlingInstructionDoNothing()` — skip the missed firing entirely, wait for the next naturally scheduled time.
 
+```java
+Trigger trigger = TriggerBuilder.newTrigger()
+        .withIdentity("myTrigger", "myGroup")
+        .withSchedule(CronScheduleBuilder.cronSchedule("0 0 9 * * ?")
+                .withMisfireHandlingInstructionFireAndProceed())
+        .build();
+```
+
 There's no universally "correct" choice — it depends on whether a missed firing represents lost work that must happen eventually, or a snapshot that's only meaningful at its exact scheduled moment. A "generate today's report" job usually wants `FireAndProceed` (the report still needs to exist); a "sample current queue depth every minute" job usually wants `DoNothing` (a late sample of a now-different queue depth isn't useful). **Pick deliberately per job — don't leave it at Quartz's default and hope.**
 
 ### 2.3 `storeDurably` and `requestRecovery`
@@ -114,7 +211,7 @@ There's no universally "correct" choice — it depends on whether a missed firin
 Two `JobBuilder` flags that matter far more than their one-line names suggest:
 
 ```java
-JobBuilder.newJob(MyJob.class)
+JobDetail job = JobBuilder.newJob(HelloWorldJob.class)
         .withIdentity("myJob", "myGroup")
         .storeDurably(true)
         .requestRecovery(true)
@@ -123,6 +220,72 @@ JobBuilder.newJob(MyJob.class)
 
 - **`storeDurably(true)`** — by default, Quartz deletes a `JobDetail` from its store once it has no triggers pointing at it. This is almost never what you want for application-managed jobs (imagine losing your job definition because someone temporarily removed its trigger). Setting this to `true` tells Quartz "keep this `JobDetail` around even with zero triggers."
 - **`requestRecovery(true)`** — if the scheduler process dies *mid-execution* of this job, should Quartz re-run it on restart? This only matters for jobs where "started but didn't finish" leaves things in a state that's safe (or necessary) to redo — it should line up with whether your job's own logic is idempotent/restart-safe, not be flipped on reflexively for every job.
+
+### 2.4 Complete Example with Misfire Handling and Shutdown
+
+Here's a complete, production-ready example combining everything from Parts 1-2:
+
+```java
+public class QuartzBasicsApplication {
+    private static final Logger log = LoggerFactory.getLogger(QuartzBasicsApplication.class);
+    
+    public static void main(String[] args) {
+        try {
+            Scheduler scheduler = new StdSchedulerFactory().getScheduler();
+            scheduler.start();
+            log.info("Scheduler started successfully");
+            
+            // Build JobDetail with data
+            JobDetail job = JobBuilder.newJob(HelloWorldJob.class)
+                    .withIdentity("helloWorldJob", "helloWorldGroup")
+                    .usingJobData("message", "Hello World from Quartz!")
+                    .usingJobData("timestamp", String.valueOf(System.currentTimeMillis()))
+                    .storeDurably(true)
+                    .requestRecovery(true)
+                    .build();
+            
+            // Build Trigger with misfire handling
+            Trigger trigger = TriggerBuilder.newTrigger()
+                    .withIdentity("helloWorldTrigger", "helloWorldGroup")
+                    .startNow()
+                    .withSchedule(SimpleScheduleBuilder.simpleSchedule()
+                            .withIntervalInSeconds(25)
+                            .repeatForever()
+                            .withMisfireHandlingInstructionFireNow())
+                    .build();
+            
+            scheduler.scheduleJob(job, trigger);
+            log.info("Job scheduled successfully");
+            
+            // Graceful shutdown
+            Runtime.getRuntime().addShutdownHook(new Thread(() -> {
+                try {
+                    log.info("Shutting down scheduler...");
+                    scheduler.shutdown(true);
+                    log.info("Scheduler shutdown complete");
+                } catch (SchedulerException e) {
+                    log.error("Error shutting down scheduler", e);
+                }
+            }));
+            
+            Thread.currentThread().join();
+            
+        } catch (SchedulerException e) {
+            log.error("Failed to initialize or start scheduler", e);
+            System.exit(1);
+        } catch (InterruptedException e) {
+            log.error("Main thread interrupted", e);
+            Thread.currentThread().interrupt();
+        }
+    }
+}
+```
+
+**Key takeaways from this example:**
+1. **Job data** passes configuration to the job
+2. **Misfire handling** ensures missed firings are caught up
+3. **Shutdown hook** guarantees graceful cleanup
+4. **Error handling** prevents silent failures
 
 ---
 
